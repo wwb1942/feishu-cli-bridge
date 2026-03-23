@@ -75,6 +75,7 @@ export async function runCodexReply(config, history, inbound) {
   const args = [
     'exec',
     '--skip-git-repo-check',
+    '-c', `model_reasoning_effort=\"${config.reasoningEffort}\"`,
     '--sandbox', config.sandbox,
     '--model', config.model,
     '--output-last-message', lastMessageFile,
@@ -94,7 +95,7 @@ export async function runCodexReply(config, history, inbound) {
     cwd: config.workdir,
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
-    timeout: 10 * 60 * 1000,
+    timeout: config.timeoutMs,
   });
 
   const rawReply = (await fs.readFile(lastMessageFile, 'utf8')).trim();

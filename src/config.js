@@ -22,10 +22,13 @@ export function loadConfig() {
     codex: {
       bin: process.env.CODEX_BIN || 'codex',
       model: process.env.CODEX_MODEL || 'gpt-5.4',
+      reasoningEffort: process.env.CODEX_REASONING_EFFORT || 'low',
       sandbox: process.env.CODEX_SANDBOX || 'workspace-write',
       workdir: path.resolve(process.env.CODEX_WORKDIR || projectRoot),
       historyLimit: Number.parseInt(process.env.CODEX_HISTORY_LIMIT || '12', 10),
+      imageHistoryLimit: Number.parseInt(process.env.CODEX_IMAGE_HISTORY_LIMIT || '4', 10),
       maxImageAttachments: Number.parseInt(process.env.CODEX_MAX_IMAGE_ATTACHMENTS || '4', 10),
+      timeoutMs: Number.parseInt(process.env.CODEX_TIMEOUT_MS || '180000', 10),
       systemPrompt: process.env.CODEX_BRIDGE_SYSTEM_PROMPT || 'You are Codex in a Feishu bot bridge. Reply concisely and helpfully in plain text. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]]. Keep any user-visible text outside those markers.',
     },
     feishu: {

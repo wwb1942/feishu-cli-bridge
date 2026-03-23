@@ -70,6 +70,8 @@ npm run start:feishu
 Inbound:
 - Feishu image/file messages are downloaded into the local `data/media/` tree.
 - Image attachments are also passed into `codex exec` via `--image`.
+- Pure placeholder media events like `[image]` are queued and merged with the next real text message from the same user.
+- Duplicate inbound Feishu events are deduplicated in-memory before they reach Codex.
 
 Outbound:
 - If Codex wants to send media back, it should emit markers in the final text:
@@ -80,6 +82,7 @@ Outbound:
 ```
 
 - Keep any normal user-facing text outside those marker lines.
+- Image questions use a shorter history window and lower reasoning effort by default to avoid long stalls.
 
 ---
 
@@ -104,10 +107,13 @@ FEISHU_MAX_INBOUND_BYTES=31457280
 
 CODEX_BIN=codex
 CODEX_MODEL=gpt-5.4
+CODEX_REASONING_EFFORT=low
 CODEX_SANDBOX=workspace-write
 CODEX_WORKDIR=/root/projects/wechat-codex-bridge
 CODEX_HISTORY_LIMIT=12
 CODEX_MAX_IMAGE_ATTACHMENTS=4
+CODEX_IMAGE_HISTORY_LIMIT=4
+CODEX_TIMEOUT_MS=180000
 CODEX_BRIDGE_SYSTEM_PROMPT=You are Codex in a Feishu bot bridge. Reply concisely and helpfully in plain text. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]].
 
 DATA_DIR=/root/projects/wechat-codex-bridge/data/default
