@@ -31,8 +31,9 @@ It does **not** depend on OpenClaw bindings or JARVIS routing. The bridge opens 
 | **Direct Feishu bridge** | Receives `im.message.receive_v1` over Feishu WebSocket |
 | **Real Codex execution** | Runs `codex exec` on the machine that owns files and credentials |
 | **Session continuity** | Per-peer JSON history under `data/sessions/` |
+| **Inbound media download** | Feishu images/files are saved locally and exposed to Codex |
+| **Outbound media send** | Codex can return `[[image:/abs/path]]` / `[[file:/abs/path]]` markers |
 | **Dedicated bot profile** | Separate env file and launcher for an isolated bot |
-| **Thin architecture** | No OpenClaw routing/bindings required |
 
 ---
 
@@ -64,25 +65,21 @@ npm run start:feishu
 
 ---
 
-## Current Dedicated Bot Profile
+## Media Protocol
 
-This repo already supports a dedicated local profile file:
+Inbound:
+- Feishu image/file messages are downloaded into the local `data/media/` tree.
+- Image attachments are also passed into `codex exec` via `--image`.
 
-```bash
-.env.feishu-direct
+Outbound:
+- If Codex wants to send media back, it should emit markers in the final text:
+
+```text
+[[image:/absolute/path/to/image.png]]
+[[file:/absolute/path/to/report.pdf]]
 ```
 
-Recommended storage path:
-
-```bash
-/root/projects/wechat-codex-bridge/data/feishu-direct
-```
-
-For a different bot, create another env file and pass it to the launcher:
-
-```bash
-./run-feishu-direct.sh /path/to/your.env
-```
+- Keep any normal user-facing text outside those marker lines.
 
 ---
 
@@ -103,13 +100,15 @@ FEISHU_ENCRYPT_KEY=
 FEISHU_VERIFICATION_TOKEN=
 FEISHU_ACCOUNT_ID=custom-1
 FEISHU_REPLY_CHUNK_CHARS=1400
+FEISHU_MAX_INBOUND_BYTES=31457280
 
 CODEX_BIN=codex
 CODEX_MODEL=gpt-5.4
 CODEX_SANDBOX=workspace-write
 CODEX_WORKDIR=/root/projects/wechat-codex-bridge
 CODEX_HISTORY_LIMIT=12
-CODEX_BRIDGE_SYSTEM_PROMPT=You are Codex in a Feishu bot bridge. Reply concisely and helpfully in plain text.
+CODEX_MAX_IMAGE_ATTACHMENTS=4
+CODEX_BRIDGE_SYSTEM_PROMPT=You are Codex in a Feishu bot bridge. Reply concisely and helpfully in plain text. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]].
 
 DATA_DIR=/root/projects/wechat-codex-bridge/data/default
 PROJECT_ROOT=/root/projects/wechat-codex-bridge
@@ -121,21 +120,12 @@ PROJECT_ROOT=/root/projects/wechat-codex-bridge
 
 | File | Purpose |
 |---|---|
-| `src/feishu-adapter.js` | Feishu WebSocket + send/reply adapter |
-| `src/codex-runner.js` | Launches `codex exec` with rolling history |
+| `src/feishu-adapter.js` | Feishu WebSocket + media download/upload + send/reply adapter |
+| `src/codex-runner.js` | Launches `codex exec` with rolling history and image attachments |
 | `src/session-store.js` | Peer-scoped JSON session store |
 | `src/index.js` | Bridge entrypoint and queueing |
 | `src/config.js` | Environment/config loader |
 | `run-feishu-direct.sh` | Launcher for dedicated bot profiles |
-
----
-
-## What It Does Not Do Yet
-
-- No group chat strategy yet
-- No image/file forwarding yet
-- No OpenClaw tool routing or agent orchestration
-- No production-grade supervisor/service files yet
 
 ---
 
@@ -145,11 +135,3 @@ PROJECT_ROOT=/root/projects/wechat-codex-bridge
 - Keep bot credentials only in local env files or your process manager.
 - `data/`, `.wechat-codex-bridge/`, `node_modules/`, and `*.bak.*` are excluded from git.
 - Before publishing, run a quick secret scan on the repo and verify only placeholder values remain in `.env.example`.
-
----
-
-## Notes
-
-- WebSocket callback mode must be enabled in the Feishu developer console for the app you use.
-- This bridge is intentionally CLI-first: replies come from the real local `codex exec`, not an SDK wrapper.
-- Keep your `.env.feishu-direct` local. It is excluded from git.
