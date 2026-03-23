@@ -139,6 +139,15 @@ PROJECT_ROOT=/root/projects/wechat-codex-bridge
 
 ---
 
+## Security
+
+- Never commit `.env.feishu-direct`, `.env.local`, or any real credential file.
+- Keep bot credentials only in local env files or your process manager.
+- `data/`, `.wechat-codex-bridge/`, `node_modules/`, and `*.bak.*` are excluded from git.
+- Before publishing, run a quick secret scan on the repo and verify only placeholder values remain in `.env.example`.
+
+---
+
 ## Notes
 
 - WebSocket callback mode must be enabled in the Feishu developer console for the app you use.
