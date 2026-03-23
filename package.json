@@ -1,0 +1,14 @@
+{
+  "name": "feishu-cli-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "check": "node --check src/index.js && node --check src/feishu-adapter.js && node --check src/codex-runner.js && node --check src/session-store.js && node --check src/config.js"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0",
+    "https-proxy-agent": "^8.0.0"
+  }
+}
