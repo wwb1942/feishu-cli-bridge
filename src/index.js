@@ -1,5 +1,16 @@
 import { loadConfig } from './config.js';
-import { ensureSessionStore, loadConversation, saveConversation, appendConversation } from './session-store.js';
+import {
+  acquireProcessLock,
+  ensureSessionStore,
+  loadConversation,
+  saveConversation,
+  appendConversation,
+  loadInboundState,
+  saveInboundState,
+  claimInboundEvent,
+  updateInboundEventClaim,
+  releaseInboundEventClaim,
+} from './session-store.js';
 import { runCodexReply } from './codex-runner.js';
 import { startFeishuBridge } from './feishu-adapter.js';
 import fs from 'node:fs/promises';
@@ -7,12 +18,13 @@ import fs from 'node:fs/promises';
 const config = loadConfig();
 await ensureSessionStore(config.sessionsDir);
 await fs.mkdir(config.mediaDir, { recursive: true });
+const releaseProcessLock = await acquireProcessLock(config.processLockFile);
+const inboundState = await loadInboundState(config.inboundStateFile);
 
 const queues = new Map();
 const pendingMedia = new Map();
 const recentInbound = new Map();
 const MEDIA_PLACEHOLDER_RE = /^\[(image|file|audio|media|message)\]$/i;
-const INBOUND_DEDUP_WINDOW_MS = 12_000;
 
 function enqueue(peerId, task) {
   const previous = queues.get(peerId) || Promise.resolve();
@@ -43,43 +55,176 @@ function summarizeAttachments(attachments) {
   return attachments.map((attachment) => `[${attachment.kind}] ${attachment.path}`).join('\n');
 }
 
-function isDuplicateInbound(inbound) {
-  const messageId = inbound.meta?.messageId?.trim();
-  if (messageId) {
-    if (recentInbound.has(messageId)) {
-      return true;
-    }
-    recentInbound.set(messageId, Date.now());
-    return false;
+function buildInboundContentFingerprint(inbound) {
+  const attachmentSummary = (inbound.attachments || [])
+    .map((item) => `${item.kind}:${item.fileName || item.path || ''}`)
+    .join('|');
+  const contentFingerprint = inbound.meta?.contentFingerprint?.trim();
+  if (contentFingerprint) {
+    return contentFingerprint;
   }
-
-  const fingerprint = `${inbound.peerId}:${inbound.text}:${(inbound.attachments || []).map((item) => item.path).join('|')}`;
-  const lastSeenAt = recentInbound.get(fingerprint);
-  recentInbound.set(fingerprint, Date.now());
-  return Boolean(lastSeenAt && Date.now() - lastSeenAt < INBOUND_DEDUP_WINDOW_MS);
+  return `${inbound.peerId}:${inbound.text}:${attachmentSummary}`;
 }
 
-function pruneRecentInbound() {
-  const now = Date.now();
+function getInboundEventKeys(inbound) {
+  const keys = [];
+  const eventId = inbound.meta?.eventId?.trim();
+  if (eventId) {
+    keys.push(`event:${eventId}`);
+  }
+  const messageId = inbound.meta?.messageId?.trim();
+  if (messageId) {
+    keys.push(`message:${messageId}`);
+  }
+  keys.push(`content:${buildInboundContentFingerprint(inbound)}`);
+  return [...new Set(keys)];
+}
+
+function pruneRecentInbound(now = Date.now()) {
   for (const [key, timestamp] of recentInbound.entries()) {
-    if (now - timestamp > INBOUND_DEDUP_WINDOW_MS) {
+    if (now - timestamp > config.feishu.inboundDedupWindowMs) {
       recentInbound.delete(key);
     }
   }
 }
 
+function pruneInboundState(now = Date.now()) {
+  for (const [key, entry] of Object.entries(inboundState.events || {})) {
+    if (!entry || typeof entry !== 'object') {
+      delete inboundState.events[key];
+      continue;
+    }
+    const updatedAt = Number(entry.updatedAt) || 0;
+    const ttl = entry.status === 'replied'
+      ? config.feishu.inboundRepliedTtlMs
+      : config.feishu.inboundProcessingTtlMs;
+    if (now - updatedAt > ttl) {
+      delete inboundState.events[key];
+    }
+  }
+}
+
+async function persistInboundState() {
+  await saveInboundState(config.inboundStateFile, inboundState);
+}
+
+async function claimInbound(inbound) {
+  const now = Date.now();
+  const eventKeys = getInboundEventKeys(inbound);
+
+  for (const eventKey of eventKeys) {
+    const recentSeenAt = recentInbound.get(eventKey);
+    if (recentSeenAt && now - recentSeenAt < config.feishu.inboundDedupWindowMs) {
+      return { accepted: false, eventKey, eventKeys, reason: 'memory-window' };
+    }
+  }
+
+  for (const eventKey of eventKeys) {
+    const existing = inboundState.events[eventKey];
+    if (existing?.status === 'replied' && now - (Number(existing.updatedAt) || 0) < config.feishu.inboundRepliedTtlMs) {
+      recentInbound.set(eventKey, now);
+      return { accepted: false, eventKey, eventKeys, reason: 'already-replied' };
+    }
+
+    if (existing?.status === 'processing' && now - (Number(existing.updatedAt) || 0) < config.feishu.inboundProcessingTtlMs) {
+      recentInbound.set(eventKey, now);
+      return { accepted: false, eventKey, eventKeys, reason: 'already-processing' };
+    }
+  }
+
+  for (const eventKey of eventKeys) {
+    recentInbound.set(eventKey, now);
+  }
+
+  const claimedEntries = [];
+  for (const eventKey of eventKeys) {
+    const existing = inboundState.events[eventKey];
+    const ttlMs = existing?.status === 'replied'
+      ? config.feishu.inboundRepliedTtlMs
+      : config.feishu.inboundProcessingTtlMs;
+    const fileClaim = await claimInboundEvent(config.inboundClaimsDir, eventKey, {
+      peerId: inbound.peerId,
+      messageId: inbound.meta?.messageId || '',
+      eventId: inbound.meta?.eventId || '',
+    }, ttlMs);
+    if (!fileClaim.accepted) {
+      for (const claimedEntry of claimedEntries) {
+        await releaseInboundEventClaim(claimedEntry.claimFile);
+      }
+      return { accepted: false, eventKey, eventKeys, reason: fileClaim.reason };
+    }
+    claimedEntries.push({ eventKey, claimFile: fileClaim.filePath });
+  }
+
+  for (const claimedEntry of claimedEntries) {
+    inboundState.events[claimedEntry.eventKey] = {
+      status: 'processing',
+      updatedAt: now,
+      peerId: inbound.peerId,
+      messageId: inbound.meta?.messageId || '',
+      eventId: inbound.meta?.eventId || '',
+      claimFile: claimedEntry.claimFile,
+      relatedEventKeys: eventKeys,
+    };
+  }
+  await persistInboundState();
+  return { accepted: true, eventKey: eventKeys[0], eventKeys, claimFiles: claimedEntries.map((item) => item.claimFile) };
+}
+
+async function markInboundReplied(eventKey) {
+  const existing = inboundState.events[eventKey] || {};
+  const relatedEventKeys = Array.isArray(existing.relatedEventKeys) && existing.relatedEventKeys.length > 0
+    ? existing.relatedEventKeys
+    : [eventKey];
+  const updatedAt = Date.now();
+
+  for (const relatedKey of relatedEventKeys) {
+    const relatedExisting = inboundState.events[relatedKey] || {};
+    inboundState.events[relatedKey] = {
+      ...relatedExisting,
+      status: 'replied',
+      updatedAt,
+      relatedEventKeys,
+    };
+    if (relatedExisting.claimFile) {
+      await updateInboundEventClaim(relatedExisting.claimFile, { status: 'replied' });
+    }
+  }
+  await persistInboundState();
+}
+
+async function releaseInboundClaim(eventKey) {
+  const existing = inboundState.events[eventKey];
+  const relatedEventKeys = Array.isArray(existing?.relatedEventKeys) && existing.relatedEventKeys.length > 0
+    ? existing.relatedEventKeys
+    : [eventKey];
+
+  for (const relatedKey of relatedEventKeys) {
+    const relatedExisting = inboundState.events[relatedKey];
+    if (relatedExisting?.claimFile) {
+      await releaseInboundEventClaim(relatedExisting.claimFile);
+    }
+    delete inboundState.events[relatedKey];
+  }
+  await persistInboundState();
+}
+
 const bridge = await startFeishuBridge(config.feishu, config.mediaDir, async (inbound) => {
-  pruneRecentInbound();
-  if (isDuplicateInbound(inbound)) {
-    console.log(`[bridge] duplicate inbound skipped for ${inbound.peerId}`);
+  const now = Date.now();
+  pruneRecentInbound(now);
+  pruneInboundState(now);
+  const claim = await claimInbound(inbound);
+  if (!claim.accepted) {
+    console.log(`[bridge] duplicate inbound skipped for ${inbound.peerId} (${claim.reason}) matched_key=${claim.eventKey || '-'} message_id=${inbound.meta?.messageId || '-'} event_id=${inbound.meta?.eventId || '-'} keys=${(claim.eventKeys || []).join(',') || '-'} fingerprint=${buildInboundContentFingerprint(inbound)}`);
     return;
   }
 
-  console.log(`[bridge] inbound from ${inbound.peerId}: ${inbound.text}`);
+  console.log(`[bridge] inbound from ${inbound.peerId}: ${inbound.text} message_id=${inbound.meta?.messageId || '-'} event_id=${inbound.meta?.eventId || '-'} keys=${claim.eventKeys.join(',')}`);
 
   if ((inbound.attachments?.length || 0) > 0 && isPlaceholderOnlyMessage(inbound.text)) {
     queuePendingMedia(inbound.peerId, inbound);
     console.log(`[bridge] queued media placeholder for ${inbound.peerId}`);
+    await markInboundReplied(claim.eventKey);
     return;
   }
 
@@ -110,9 +255,15 @@ const bridge = await startFeishuBridge(config.feishu, config.mediaDir, async (in
         media: [],
         raw: '',
       };
-      await bridge.sendReply(inbound.meta.senderOpenId || inbound.peerId, fallbackReply, {
-        messageId: inbound.meta.messageId,
-      });
+      try {
+        await bridge.sendReply(inbound.meta.senderOpenId || inbound.peerId, fallbackReply, {
+          messageId: inbound.meta.messageId,
+        });
+        await markInboundReplied(claim.eventKey);
+      } catch (sendError) {
+        await releaseInboundClaim(claim.eventKey);
+        throw sendError;
+      }
       return;
     }
 
@@ -122,10 +273,16 @@ const bridge = await startFeishuBridge(config.feishu, config.mediaDir, async (in
     const finalHistory = appendConversation(updated, { role: 'assistant', text: assistantText, timestamp: Date.now() }, config.codex.historyLimit * 2);
     await saveConversation(config.sessionsDir, inbound.peerId, finalHistory);
 
-    await bridge.sendReply(inbound.meta.senderOpenId || inbound.peerId, reply, {
-      messageId: inbound.meta.messageId,
-    });
-    console.log(`[bridge] replied to ${inbound.peerId}`);
+    try {
+      await bridge.sendReply(inbound.meta.senderOpenId || inbound.peerId, reply, {
+        messageId: inbound.meta.messageId,
+      });
+      await markInboundReplied(claim.eventKey);
+    } catch (sendError) {
+      await releaseInboundClaim(claim.eventKey);
+      throw sendError;
+    }
+    console.log(`[bridge] replied to ${inbound.peerId} message_id=${inbound.meta?.messageId || '-'} event_id=${inbound.meta?.eventId || '-'} keys=${claim.eventKeys.join(',')}`);
   });
 });
 
@@ -133,3 +290,12 @@ console.log('[bridge] feishu-codex-bridge started');
 console.log(`[bridge] codex model: ${config.codex.model}`);
 console.log(`[bridge] sessions dir: ${config.sessionsDir}`);
 console.log(`[bridge] media dir: ${config.mediaDir}`);
+console.log(`[bridge] process pid: ${process.pid}`);
+
+const shutdown = async () => {
+  await releaseProcessLock().catch(() => {});
+  process.exit(0);
+};
+
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);

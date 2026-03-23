@@ -1,7 +1,0 @@
-node_modules/
-data/
-.env.feishu-direct
-.env.local
-.wechat-codex-bridge/
-*.bak.*
-/tmp/

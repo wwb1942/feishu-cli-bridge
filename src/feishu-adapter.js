@@ -2,6 +2,7 @@ import * as Lark from '@larksuiteoapi/node-sdk';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 function createLogger(prefix) {
   return {
@@ -236,17 +237,91 @@ function parseInboundText(message) {
   return typeof content.text === 'string' ? content.text.trim() : '';
 }
 
+function buildContentFingerprint(message) {
+  const content = typeof message?.content === 'string' ? message.content : '';
+  const digest = crypto.createHash('sha1').update(`${message?.message_type || ''}\n${content}`).digest('hex');
+  return digest;
+}
+
+function createRecentOutboundTracker(ttlMs = 10 * 60 * 1000) {
+  const sentMessageIds = new Map();
+
+  function prune(now = Date.now()) {
+    for (const [messageId, expiresAt] of sentMessageIds.entries()) {
+      if (expiresAt <= now) {
+        sentMessageIds.delete(messageId);
+      }
+    }
+  }
+
+  return {
+    remember(messageId) {
+      if (!messageId) {
+        return;
+      }
+      const now = Date.now();
+      prune(now);
+      sentMessageIds.set(messageId, now + ttlMs);
+    },
+    has(messageId) {
+      if (!messageId) {
+        return false;
+      }
+      prune();
+      return sentMessageIds.has(messageId);
+    },
+  };
+}
+
+function buildOutboundUuid(replyMeta, kind, index) {
+  const seed = [
+    replyMeta?.messageId || 'standalone',
+    kind,
+    String(index),
+  ].join(':');
+  return crypto.createHash('sha1').update(seed).digest('hex');
+}
+
+function getCreatedMessageId(response) {
+  return response?.data?.message_id || response?.message_id || '';
+}
+
+async function createMessage(client, tracker, payload) {
+  const response = await client.im.message.create(payload);
+  tracker.remember(getCreatedMessageId(response));
+  return response;
+}
+
 export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
   const log = createLogger('feishu-bridge');
   const client = createClient(config);
   const wsClient = createWsClient(config);
   const dispatcher = createDispatcher(config);
+  const recentOutbound = createRecentOutboundTracker();
+
+  function dispatchInbound(inbound) {
+    Promise.resolve()
+      .then(() => onInboundMessage(inbound))
+      .catch((error) => {
+        log.error(`inbound handler failed for message=${inbound.meta?.messageId || '-'} event=${inbound.meta?.eventId || '-'}`, error);
+      });
+  }
 
   dispatcher.register({
     'im.message.receive_v1': async (data) => {
       const event = data;
+      const eventId = event?.header?.event_id || event?.event_id || '';
       const message = event?.message;
       if (!message) {
+        return;
+      }
+      if (recentOutbound.has(message.message_id)) {
+        log.info(`ignored outbound echo by message id for ${message.message_id}`);
+        return;
+      }
+      const senderType = event?.sender?.sender_type || '';
+      if (senderType === 'ASSISTANT') {
+        log.info(`ignored assistant echo for ${message.message_id}`);
         return;
       }
       const text = parseInboundText(message);
@@ -254,27 +329,35 @@ export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
       const messageId = message.message_id;
       const chatType = message.chat_type;
       const senderOpenId = event?.sender?.sender_id?.open_id || '';
+      Promise.resolve()
+        .then(async () => {
+          const attachment = await downloadInboundAttachment(client, message, config, mediaDir).catch((error) => {
+            log.warn(`attachment download failed for ${messageId}: ${error.message}`);
+            return null;
+          });
 
-      const attachment = await downloadInboundAttachment(client, message, config, mediaDir).catch((error) => {
-        log.warn(`attachment download failed for ${messageId}: ${error.message}`);
-        return null;
-      });
+          if (!text && !attachment) {
+            return;
+          }
 
-      if (!text && !attachment) {
-        return;
-      }
-
-      await onInboundMessage({
-        peerId: senderOpenId || chatId,
-        text: text || `[${message.message_type || 'message'}]`,
-        attachments: attachment ? [attachment] : [],
-        meta: {
-          chatId,
-          messageId,
-          chatType,
-          senderOpenId,
-        },
-      });
+          dispatchInbound({
+            peerId: senderOpenId || chatId,
+            text: text || `[${message.message_type || 'message'}]`,
+            attachments: attachment ? [attachment] : [],
+            meta: {
+              chatId,
+              messageId,
+              eventId,
+              chatType,
+              contentFingerprint: buildContentFingerprint(message),
+              senderOpenId,
+              senderType,
+            },
+          });
+        })
+        .catch((error) => {
+          log.error(`inbound preload failed for message=${messageId || '-'} event=${eventId || '-'}`, error);
+        });
     },
     'im.message.message_read_v1': async () => {},
   });
@@ -288,46 +371,35 @@ export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
   return {
     async sendReply(target, reply, replyMeta) {
       const textChunks = splitText(reply.text || '', config.chunkChars).filter(Boolean);
-      for (const chunk of textChunks) {
-        if (replyMeta?.messageId) {
-          await client.im.message.reply({
-            path: { message_id: replyMeta.messageId },
-            data: {
-              content: JSON.stringify({ text: chunk }),
-              msg_type: 'text',
-            },
-          });
-        } else {
-          await client.im.message.create({
-            params: { receive_id_type: 'open_id' },
-            data: {
-              receive_id: target,
-              content: JSON.stringify({ text: chunk }),
-              msg_type: 'text',
-            },
-          });
-        }
+      for (const [index, chunk] of textChunks.entries()) {
+        await createMessage(client, recentOutbound, {
+          params: { receive_id_type: 'open_id' },
+          data: {
+            receive_id: target,
+            content: JSON.stringify({ text: chunk }),
+            msg_type: 'text',
+            uuid: buildOutboundUuid(replyMeta, 'text', index),
+          },
+        });
       }
 
-      for (const media of parseReplyMedia(reply)) {
+      for (const [index, media] of parseReplyMedia(reply).entries()) {
         if (media.kind === 'image') {
           const imageKey = await uploadImage(client, media.path);
           const payload = { content: JSON.stringify({ image_key: imageKey }), msg_type: 'image' };
-          if (replyMeta?.messageId) {
-            await client.im.message.reply({ path: { message_id: replyMeta.messageId }, data: payload });
-          } else {
-            await client.im.message.create({ params: { receive_id_type: 'open_id' }, data: { receive_id: target, ...payload } });
-          }
+          await createMessage(client, recentOutbound, {
+            params: { receive_id_type: 'open_id' },
+            data: { receive_id: target, ...payload, uuid: buildOutboundUuid(replyMeta, 'image', index) },
+          });
           continue;
         }
 
         const fileKey = await uploadFile(client, media.path);
         const payload = { content: JSON.stringify({ file_key: fileKey }), msg_type: 'file' };
-        if (replyMeta?.messageId) {
-          await client.im.message.reply({ path: { message_id: replyMeta.messageId }, data: payload });
-        } else {
-          await client.im.message.create({ params: { receive_id_type: 'open_id' }, data: { receive_id: target, ...payload } });
-        }
+        await createMessage(client, recentOutbound, {
+          params: { receive_id_type: 'open_id' },
+          data: { receive_id: target, ...payload, uuid: buildOutboundUuid(replyMeta, 'file', index) },
+        });
       }
     },
   };
