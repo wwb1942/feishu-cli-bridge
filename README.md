@@ -1,44 +1,146 @@
+<div align="center">
+
 # feishu-cli-bridge
 
-Standalone bridge that connects a dedicated Feishu bot directly to Codex CLI without using OpenClaw routing/bindings.
+**Feishu Frontend for direct Codex CLI execution**
 
-## Current bot profile
+*Forward Feishu bot messages to your local Codex CLI, execute on the real machine, send results back.*
 
-A dedicated local profile has been prepared in:
+[![Runtime](https://img.shields.io/badge/Runtime-Node%2022-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Interface](https://img.shields.io/badge/Interface-Feishu-00B96B)](https://www.feishu.cn/)
+[![Backend](https://img.shields.io/badge/Backend-Codex%20CLI-black)](https://github.com/openai/codex)
+
+</div>
+
+---
+
+## What This Is
+
+A standalone Feishu frontend for `codex exec`.
+
+It does **not** depend on OpenClaw bindings or JARVIS routing. The bridge opens a Feishu WebSocket connection using your bot app credentials, receives direct messages, stores short per-user history locally, calls `codex exec`, and sends the reply back to the same Feishu conversation.
+
+> **Core rule:** one Feishu bot = one Codex bridge process = one local Codex execution environment.
+
+---
+
+## What You Get
+
+| Feature | Description |
+|---|---|
+| **Direct Feishu bridge** | Receives `im.message.receive_v1` over Feishu WebSocket |
+| **Real Codex execution** | Runs `codex exec` on the machine that owns files and credentials |
+| **Session continuity** | Per-peer JSON history under `data/sessions/` |
+| **Dedicated bot profile** | Separate env file and launcher for an isolated bot |
+| **Thin architecture** | No OpenClaw routing/bindings required |
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/wwb1942/feishu-cli-bridge.git
+cd feishu-cli-bridge
+npm install
+```
+
+Prepare environment:
+
+```bash
+cp .env.example .env.feishu-direct
+```
+
+Fill in your Feishu app credentials, then run:
+
+```bash
+./run-feishu-direct.sh
+```
+
+Or use npm:
+
+```bash
+npm run start:feishu
+```
+
+---
+
+## Current Dedicated Bot Profile
+
+This repo already supports a dedicated local profile file:
 
 ```bash
 .env.feishu-direct
 ```
 
-It uses its own Feishu app credentials and isolated session store under:
+Recommended storage path:
 
 ```bash
 /root/projects/wechat-codex-bridge/data/feishu-direct
 ```
 
-## Run
-
-```bash
-cd /root/projects/wechat-codex-bridge
-./run-feishu-direct.sh
-```
-
-If you want a different bot profile, copy `.env.example` to a new env file and pass it to the launcher:
+For a different bot, create another env file and pass it to the launcher:
 
 ```bash
 ./run-feishu-direct.sh /path/to/your.env
 ```
 
-## What it does
+---
 
-- Opens a direct Feishu WebSocket event stream with your app credentials
-- Receives `im.message.receive_v1` messages
-- Stores short conversation history per peer under `data/sessions/`
-- Calls `codex exec` directly for each inbound message
-- Replies back to the same Feishu conversation
+## Environment Variables
+
+Required:
+
+```dotenv
+FEISHU_APP_ID=...
+FEISHU_APP_SECRET=...
+```
+
+Optional:
+
+```dotenv
+FEISHU_DOMAIN=feishu
+FEISHU_ENCRYPT_KEY=
+FEISHU_VERIFICATION_TOKEN=
+FEISHU_ACCOUNT_ID=custom-1
+FEISHU_REPLY_CHUNK_CHARS=1400
+
+CODEX_BIN=codex
+CODEX_MODEL=gpt-5.4
+CODEX_SANDBOX=workspace-write
+CODEX_WORKDIR=/root/projects/wechat-codex-bridge
+CODEX_HISTORY_LIMIT=12
+CODEX_BRIDGE_SYSTEM_PROMPT=You are Codex in a Feishu bot bridge. Reply concisely and helpfully in plain text.
+
+DATA_DIR=/root/projects/wechat-codex-bridge/data/default
+PROJECT_ROOT=/root/projects/wechat-codex-bridge
+```
+
+---
+
+## Project Structure
+
+| File | Purpose |
+|---|---|
+| `src/feishu-adapter.js` | Feishu WebSocket + send/reply adapter |
+| `src/codex-runner.js` | Launches `codex exec` with rolling history |
+| `src/session-store.js` | Peer-scoped JSON session store |
+| `src/index.js` | Bridge entrypoint and queueing |
+| `src/config.js` | Environment/config loader |
+| `run-feishu-direct.sh` | Launcher for dedicated bot profiles |
+
+---
+
+## What It Does Not Do Yet
+
+- No group chat strategy yet
+- No image/file forwarding yet
+- No OpenClaw tool routing or agent orchestration
+- No production-grade supervisor/service files yet
+
+---
 
 ## Notes
 
-- This project does not reuse OpenClaw bindings or JARVIS routing
-- It is a direct bot-to-Codex bridge
-- WebSocket callback mode must be enabled in the Feishu developer console for the app you use
+- WebSocket callback mode must be enabled in the Feishu developer console for the app you use.
+- This bridge is intentionally CLI-first: replies come from the real local `codex exec`, not an SDK wrapper.
+- Keep your `.env.feishu-direct` local. It is excluded from git.
