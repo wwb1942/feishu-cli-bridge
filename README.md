@@ -71,7 +71,10 @@ Inbound:
 - Feishu image/file messages are downloaded into the local `data/media/` tree.
 - Image attachments are also passed into `codex exec` via `--image`.
 - Pure placeholder media events like `[image]` are queued and merged with the next real text message from the same user.
-- Duplicate inbound Feishu events are deduplicated in-memory before they reach Codex.
+- Duplicate inbound Feishu events are deduplicated with persisted state plus per-event atomic claim files, so retries, short restarts, and accidental multi-process overlap do not replay the same user message.
+- Assistant-originated `im.message.receive_v1` events are ignored, so the bot does not consume its own outbound replies.
+- Inbound event callbacks are acknowledged immediately and processed asynchronously in-process, reducing Feishu retries when attachment download or Codex execution is slow.
+- Only one bridge process may hold the `DATA_DIR/bridge.lock` instance lock at a time. A second copy exits instead of double-consuming the same Feishu stream.
 
 Outbound:
 - If Codex wants to send media back, it should emit markers in the final text:
@@ -104,6 +107,9 @@ FEISHU_VERIFICATION_TOKEN=
 FEISHU_ACCOUNT_ID=custom-1
 FEISHU_REPLY_CHUNK_CHARS=1400
 FEISHU_MAX_INBOUND_BYTES=31457280
+FEISHU_INBOUND_DEDUP_WINDOW_MS=12000
+FEISHU_INBOUND_PROCESSING_TTL_MS=300000
+FEISHU_INBOUND_REPLIED_TTL_MS=86400000
 
 CODEX_BIN=codex
 CODEX_MODEL=gpt-5.4
@@ -114,6 +120,7 @@ CODEX_HISTORY_LIMIT=12
 CODEX_MAX_IMAGE_ATTACHMENTS=4
 CODEX_IMAGE_HISTORY_LIMIT=4
 CODEX_TIMEOUT_MS=180000
+CODEX_MAX_IMAGE_DIMENSION=1280
 CODEX_BRIDGE_SYSTEM_PROMPT=You are Codex in a Feishu bot bridge. Reply concisely and helpfully in plain text. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]].
 
 DATA_DIR=/root/projects/wechat-codex-bridge/data/default

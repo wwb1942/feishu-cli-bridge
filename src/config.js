@@ -13,12 +13,18 @@ export function loadConfig() {
   const dataDir = path.resolve(process.env.DATA_DIR || path.join(projectRoot, 'data'));
   const sessionsDir = path.join(dataDir, 'sessions');
   const mediaDir = path.join(dataDir, 'media');
+  const inboundStateFile = path.join(dataDir, 'inbound-state.json');
+  const inboundClaimsDir = path.join(dataDir, 'inbound-claims');
+  const processLockFile = path.join(dataDir, 'bridge.lock');
 
   return {
     projectRoot,
     dataDir,
     sessionsDir,
     mediaDir,
+    inboundStateFile,
+    inboundClaimsDir,
+    processLockFile,
     codex: {
       bin: process.env.CODEX_BIN || 'codex',
       model: process.env.CODEX_MODEL || 'gpt-5.4',
@@ -29,6 +35,7 @@ export function loadConfig() {
       imageHistoryLimit: Number.parseInt(process.env.CODEX_IMAGE_HISTORY_LIMIT || '4', 10),
       maxImageAttachments: Number.parseInt(process.env.CODEX_MAX_IMAGE_ATTACHMENTS || '4', 10),
       timeoutMs: Number.parseInt(process.env.CODEX_TIMEOUT_MS || '180000', 10),
+      maxImageDimension: Number.parseInt(process.env.CODEX_MAX_IMAGE_DIMENSION || '1280', 10),
       systemPrompt: process.env.CODEX_BRIDGE_SYSTEM_PROMPT || 'You are Codex in a Feishu bot bridge. Reply concisely and helpfully in plain text. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]]. Keep any user-visible text outside those markers.',
     },
     feishu: {
@@ -40,6 +47,9 @@ export function loadConfig() {
       chunkChars: Number.parseInt(process.env.FEISHU_REPLY_CHUNK_CHARS || '1400', 10),
       accountId: process.env.FEISHU_ACCOUNT_ID || 'custom-1',
       maxInboundBytes: Number.parseInt(process.env.FEISHU_MAX_INBOUND_BYTES || String(30 * 1024 * 1024), 10),
+      inboundDedupWindowMs: Number.parseInt(process.env.FEISHU_INBOUND_DEDUP_WINDOW_MS || '12000', 10),
+      inboundProcessingTtlMs: Number.parseInt(process.env.FEISHU_INBOUND_PROCESSING_TTL_MS || '300000', 10),
+      inboundRepliedTtlMs: Number.parseInt(process.env.FEISHU_INBOUND_REPLIED_TTL_MS || '86400000', 10),
     },
   };
 }

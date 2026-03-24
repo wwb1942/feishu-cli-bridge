@@ -66,6 +66,23 @@ function extractMediaMarkers(rawReply) {
   };
 }
 
+async function ensurePreparedImage(config, imagePath, outputDir) {
+  const preparedPath = path.join(outputDir, `prepared-${path.basename(imagePath, path.extname(imagePath))}.jpg`);
+  await execFileAsync('ffmpeg', [
+    '-y',
+    '-i', imagePath,
+    '-vf', `scale='min(${config.maxImageDimension},iw)':'min(${config.maxImageDimension},ih)':force_original_aspect_ratio=decrease`,
+    '-q:v', '3',
+    preparedPath,
+  ], {
+    cwd: config.workdir,
+    encoding: 'utf8',
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: 120000,
+  });
+  return preparedPath;
+}
+
 export async function runCodexReply(config, history, inbound) {
   const outputDir = path.join(config.workdir, '.wechat-codex-bridge');
   await fs.mkdir(outputDir, { recursive: true });
@@ -86,7 +103,8 @@ export async function runCodexReply(config, history, inbound) {
     .filter((attachment) => attachment.kind === 'image')
     .slice(0, config.maxImageAttachments);
   for (const image of imageAttachments) {
-    args.push('--image', image.path);
+    const preparedImage = await ensurePreparedImage(config, image.path, outputDir);
+    args.push('--image', preparedImage);
   }
 
   args.push(prompt);
