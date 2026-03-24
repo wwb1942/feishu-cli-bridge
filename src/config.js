@@ -16,6 +16,7 @@ export function loadConfig() {
   const inboundStateFile = path.join(dataDir, 'inbound-state.json');
   const inboundClaimsDir = path.join(dataDir, 'inbound-claims');
   const processLockFile = path.join(dataDir, 'bridge.lock');
+  const defaultCodexBin = process.platform === 'win32' ? 'codex.cmd' : 'codex';
 
   return {
     projectRoot,
@@ -26,7 +27,7 @@ export function loadConfig() {
     inboundClaimsDir,
     processLockFile,
     codex: {
-      bin: process.env.CODEX_BIN || 'codex',
+      bin: process.env.CODEX_BIN || defaultCodexBin,
       model: process.env.CODEX_MODEL || 'gpt-5.4',
       reasoningEffort: process.env.CODEX_REASONING_EFFORT || 'low',
       sandbox: process.env.CODEX_SANDBOX || 'workspace-write',

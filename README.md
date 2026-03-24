@@ -63,6 +63,12 @@ Or use npm:
 npm run start:feishu
 ```
 
+Windows PowerShell convenience wrapper:
+
+```powershell
+./run-feishu-direct.ps1
+```
+
 Unix/macOS convenience wrapper:
 
 ```bash
@@ -160,5 +166,7 @@ PROJECT_ROOT=/root/projects/wechat-codex-bridge
 
 - The bridge core is now cross-platform at the Node.js level.
 - `node src/launcher.js <env-file>` is the recommended startup path on Linux, macOS, and Windows.
+- On Windows, the default `CODEX_BIN` is `codex.cmd`; on Unix-like systems it defaults to `codex`.
+- `run-feishu-direct.ps1` is provided as a native PowerShell launcher for Windows.
 - `run-feishu-direct.sh` remains as a Unix convenience wrapper only.
 - The previous Linux-only `/proc` lock dependency has been removed.
