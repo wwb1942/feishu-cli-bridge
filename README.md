@@ -54,13 +54,19 @@ cp .env.example .env.feishu-direct
 Fill in your Feishu app credentials, then run:
 
 ```bash
-./run-feishu-direct.sh
+node src/launcher.js .env.feishu-direct
 ```
 
 Or use npm:
 
 ```bash
 npm run start:feishu
+```
+
+Unix/macOS convenience wrapper:
+
+```bash
+./run-feishu-direct.sh
 ```
 
 ---
@@ -134,6 +140,7 @@ PROJECT_ROOT=/root/projects/wechat-codex-bridge
 | File | Purpose |
 |---|---|
 | `src/feishu-adapter.js` | Feishu WebSocket + media download/upload + send/reply adapter |
+| `src/launcher.js` | Cross-platform env-file loader and bridge launcher |
 | `src/codex-runner.js` | Launches `codex exec` with rolling history and image attachments |
 | `src/session-store.js` | Peer-scoped JSON session store |
 | `src/index.js` | Bridge entrypoint and queueing |
@@ -148,3 +155,10 @@ PROJECT_ROOT=/root/projects/wechat-codex-bridge
 - Keep bot credentials only in local env files or your process manager.
 - `data/`, `.wechat-codex-bridge/`, `node_modules/`, and `*.bak.*` are excluded from git.
 - Before publishing, run a quick secret scan on the repo and verify only placeholder values remain in `.env.example`.
+
+## Platform Notes
+
+- The bridge core is now cross-platform at the Node.js level.
+- `node src/launcher.js <env-file>` is the recommended startup path on Linux, macOS, and Windows.
+- `run-feishu-direct.sh` remains as a Unix convenience wrapper only.
+- The previous Linux-only `/proc` lock dependency has been removed.

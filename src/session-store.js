@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
+const PROCESS_LOCK_STALE_MS = 6 * 60 * 60 * 1000;
+
 function sessionFilePath(baseDir, peerId) {
   const safeName = crypto.createHash('sha1').update(peerId).digest('hex');
   return path.join(baseDir, `${safeName}.json`);
@@ -77,21 +79,9 @@ function isAlivePid(pid) {
   }
 }
 
-async function readProcessStartTicks(pid) {
-  try {
-    const stat = await fs.readFile(`/proc/${pid}/stat`, 'utf8');
-    const closingParen = stat.lastIndexOf(')');
-    if (closingParen === -1) {
-      return null;
-    }
-    const fields = stat.slice(closingParen + 2).trim().split(/\s+/);
-    return fields[19] || null;
-  } catch (error) {
-    if (error?.code === 'ENOENT') {
-      return null;
-    }
-    throw error;
-  }
+function parseTimestamp(value) {
+  const timestamp = new Date(value || '').getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 export async function loadInboundState(filePath) {
@@ -111,11 +101,9 @@ export async function saveInboundState(filePath, state) {
 
 export async function acquireProcessLock(filePath) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const processStartTicks = await readProcessStartTicks(process.pid);
   const payload = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
-    processStartTicks,
   };
 
   try {
@@ -133,12 +121,12 @@ export async function acquireProcessLock(filePath) {
 
   const existing = await readJsonFile(filePath, null).catch(() => null);
   const existingPid = Number(existing?.pid);
-  if (isAlivePid(existingPid)) {
-    const existingProcessStartTicks = existing?.processStartTicks || null;
-    const liveProcessStartTicks = await readProcessStartTicks(existingPid);
-    const sameProcess = existingProcessStartTicks && liveProcessStartTicks && existingProcessStartTicks === liveProcessStartTicks;
-    const legacySelfCollision = !existingProcessStartTicks && existingPid === process.pid;
-    if (sameProcess && !legacySelfCollision) {
+  const existingStartedAt = parseTimestamp(existing?.startedAt);
+  const existingIsFresh = existingStartedAt > 0 && Date.now() - existingStartedAt < PROCESS_LOCK_STALE_MS;
+
+  if (isAlivePid(existingPid) && existingIsFresh) {
+    const sameProcess = existingPid === process.pid;
+    if (!sameProcess) {
       throw new Error(`Bridge already running with pid ${existingPid}`);
     }
   }

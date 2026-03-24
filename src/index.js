@@ -23,10 +23,13 @@ const inboundState = await loadInboundState(config.inboundStateFile);
 
 const queues = new Map();
 const pendingMedia = new Map();
+const recentMedia = new Map();
 const recentInbound = new Map();
 const MEDIA_PLACEHOLDER_RE = /^\[(image|file|audio|media|message)\]$/i;
 const MEDIA_MERGE_WAIT_MS = 1200;
 const MEDIA_MERGE_POLL_MS = 150;
+const RECENT_MEDIA_TTL_MS = 10 * 60 * 1000;
+const IMAGE_REFERENCE_RE = /(这张|图片|图里|截图|这幅|这图|photo|image|picture|attachment|附件)/i;
 
 function enqueue(peerId, task) {
   const previous = queues.get(peerId) || Promise.resolve();
@@ -42,12 +45,45 @@ function isPlaceholderOnlyMessage(text) {
 function queuePendingMedia(peerId, inbound) {
   const current = pendingMedia.get(peerId) || [];
   pendingMedia.set(peerId, [...current, ...(inbound.attachments || [])]);
+  rememberRecentMedia(peerId, inbound.attachments || []);
 }
 
 function consumePendingMedia(peerId) {
   const attachments = pendingMedia.get(peerId) || [];
   pendingMedia.delete(peerId);
   return attachments;
+}
+
+function rememberRecentMedia(peerId, attachments) {
+  if (!attachments?.length) {
+    return;
+  }
+  const current = recentMedia.get(peerId) || [];
+  const next = [...current, ...attachments.map((attachment) => ({
+    ...attachment,
+    rememberedAt: Date.now(),
+  }))].slice(-8);
+  recentMedia.set(peerId, next);
+}
+
+function pruneRecentMedia(now = Date.now()) {
+  for (const [peerId, entries] of recentMedia.entries()) {
+    const filtered = entries.filter((entry) => now - (entry.rememberedAt || 0) <= RECENT_MEDIA_TTL_MS);
+    if (filtered.length === 0) {
+      recentMedia.delete(peerId);
+      continue;
+    }
+    recentMedia.set(peerId, filtered);
+  }
+}
+
+function shouldUseRecentMedia(text) {
+  return IMAGE_REFERENCE_RE.test((text || '').trim());
+}
+
+function getRecentMediaForPeer(peerId) {
+  const entries = recentMedia.get(peerId) || [];
+  return entries.length > 0 ? [entries[entries.length - 1]] : [];
 }
 
 async function waitForPendingMedia(peerId) {
@@ -227,6 +263,7 @@ const bridge = await startFeishuBridge(config.feishu, config.mediaDir, async (in
   const now = Date.now();
   pruneRecentInbound(now);
   pruneInboundState(now);
+  pruneRecentMedia(now);
   const claim = await claimInbound(inbound);
   if (!claim.accepted) {
     console.log(`[bridge] duplicate inbound skipped for ${inbound.peerId} (${claim.reason}) matched_key=${claim.eventKey || '-'} message_id=${inbound.meta?.messageId || '-'} event_id=${inbound.meta?.eventId || '-'} keys=${(claim.eventKeys || []).join(',') || '-'} fingerprint=${buildInboundContentFingerprint(inbound)}`);
@@ -243,9 +280,15 @@ const bridge = await startFeishuBridge(config.feishu, config.mediaDir, async (in
   }
 
   await enqueue(inbound.peerId, async () => {
+    const queuedAttachments = await waitForPendingMedia(inbound.peerId);
+    const directAttachments = inbound.attachments || [];
+    const fallbackRecentMedia = queuedAttachments.length === 0 && directAttachments.length === 0 && shouldUseRecentMedia(inbound.text)
+      ? getRecentMediaForPeer(inbound.peerId)
+      : [];
     const mergedAttachments = [
-      ...await waitForPendingMedia(inbound.peerId),
-      ...(inbound.attachments || []),
+      ...queuedAttachments,
+      ...directAttachments,
+      ...fallbackRecentMedia,
     ];
     const effectiveInbound = {
       ...inbound,

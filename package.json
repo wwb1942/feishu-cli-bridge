@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "start:feishu": "./run-feishu-direct.sh",
-    "check": "node --check src/index.js && node --check src/feishu-adapter.js && node --check src/codex-runner.js && node --check src/session-store.js && node --check src/config.js"
+    "start:env": "node src/launcher.js",
+    "start:feishu": "node src/launcher.js .env.feishu-direct",
+    "check": "node --check src/index.js && node --check src/launcher.js && node --check src/feishu-adapter.js && node --check src/codex-runner.js && node --check src/session-store.js && node --check src/config.js"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.59.0",

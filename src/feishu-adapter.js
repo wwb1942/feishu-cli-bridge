@@ -1,6 +1,7 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
@@ -105,7 +106,7 @@ async function readFeishuResponseBuffer(response) {
     return Buffer.concat(chunks);
   }
   if (typeof responseAny.writeFile === 'function') {
-    const tempPath = path.join('/tmp', `feishu-bridge-${Date.now()}-${Math.random().toString(16).slice(2)}.bin`);
+    const tempPath = path.join(os.tmpdir(), `feishu-bridge-${Date.now()}-${Math.random().toString(16).slice(2)}.bin`);
     await responseAny.writeFile(tempPath);
     const buffer = await fs.readFile(tempPath);
     await fs.unlink(tempPath).catch(() => {});
