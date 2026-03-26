@@ -6,6 +6,7 @@
 
 *Forward Feishu bot messages to your local Codex CLI, execute on the real machine, send results back.*
 
+[![Built with Codex](https://img.shields.io/badge/Built%20with-Codex-1f6feb)](https://github.com/openai/codex)
 [![Runtime](https://img.shields.io/badge/Runtime-Node%2022-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Interface](https://img.shields.io/badge/Interface-Feishu-00B96B)](https://www.feishu.cn/)
 [![Backend](https://img.shields.io/badge/Backend-Codex%20CLI-black)](https://github.com/openai/codex)
