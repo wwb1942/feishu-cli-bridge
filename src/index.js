@@ -12,10 +12,13 @@ import {
   releaseInboundEventClaim,
 } from './session-store.js';
 import { runCodexReply } from './codex-runner.js';
+import { runClaudeReply } from './claude-runner.js';
 import { startFeishuBridge } from './feishu-adapter.js';
 import fs from 'node:fs/promises';
 
 const config = loadConfig();
+const backendConfig = config.backend === 'claude' ? config.claude : config.codex;
+const runReply = config.backend === 'claude' ? runClaudeReply : runCodexReply;
 await ensureSessionStore(config.sessionsDir);
 await fs.mkdir(config.mediaDir, { recursive: true });
 const releaseProcessLock = await acquireProcessLock(config.processLockFile);
@@ -297,16 +300,16 @@ const bridge = await startFeishuBridge(config.feishu, config.mediaDir, async (in
 
     const history = await loadConversation(config.sessionsDir, inbound.peerId);
     const historyLimit = effectiveInbound.attachments?.length
-      ? Math.min(config.codex.historyLimit, config.codex.imageHistoryLimit)
-      : config.codex.historyLimit;
+      ? Math.min(backendConfig.historyLimit, backendConfig.imageHistoryLimit)
+      : backendConfig.historyLimit;
     const trimmedHistory = history.slice(-historyLimit);
 
     let reply;
     try {
-      reply = await runCodexReply(config.codex, trimmedHistory, effectiveInbound);
+      reply = await runReply(backendConfig, trimmedHistory, effectiveInbound);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[bridge] codex failed for ${inbound.peerId}: ${message}`);
+      console.error(`[bridge] ${config.backend} failed for ${inbound.peerId}: ${message}`);
       const fallbackReply = {
         text: `抱歉，我刚刚处理这条消息超时或失败了。请你再发一次，或者把问题说得更短一点。错误: ${message}`,
         media: [],
@@ -325,9 +328,9 @@ const bridge = await startFeishuBridge(config.feishu, config.mediaDir, async (in
     }
 
     const userText = [effectiveInbound.text, summarizeAttachments(effectiveInbound.attachments)].filter(Boolean).join('\n');
-    const updated = appendConversation(trimmedHistory, { role: 'user', text: userText, timestamp: Date.now() }, config.codex.historyLimit * 2);
+    const updated = appendConversation(trimmedHistory, { role: 'user', text: userText, timestamp: Date.now() }, backendConfig.historyLimit * 2);
     const assistantText = [reply.text, ...(reply.media || []).map((item) => `[[${item.kind}:${item.path}]]`)].filter(Boolean).join('\n');
-    const finalHistory = appendConversation(updated, { role: 'assistant', text: assistantText, timestamp: Date.now() }, config.codex.historyLimit * 2);
+    const finalHistory = appendConversation(updated, { role: 'assistant', text: assistantText, timestamp: Date.now() }, backendConfig.historyLimit * 2);
     await saveConversation(config.sessionsDir, inbound.peerId, finalHistory);
 
     try {
@@ -343,8 +346,9 @@ const bridge = await startFeishuBridge(config.feishu, config.mediaDir, async (in
   });
 });
 
-console.log('[bridge] feishu-codex-bridge started');
-console.log(`[bridge] codex model: ${config.codex.model}`);
+console.log('[bridge] feishu-cli-bridge started');
+console.log(`[bridge] backend: ${config.backend}`);
+console.log(`[bridge] backend model: ${backendConfig.model || '<cli-default>'}`);
 console.log(`[bridge] sessions dir: ${config.sessionsDir}`);
 console.log(`[bridge] media dir: ${config.mediaDir}`);
 console.log(`[bridge] process pid: ${process.pid}`);
