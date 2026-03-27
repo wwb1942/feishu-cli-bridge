@@ -1,5 +1,6 @@
 node_modules/
 data/
+.worktrees/
 .env.feishu-direct
 .env.local
 .wechat-codex-bridge/
