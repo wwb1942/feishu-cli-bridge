@@ -25,7 +25,7 @@ export function loadConfig() {
   const processLockFile = path.join(dataDir, 'bridge.lock');
   const defaultCodexBin = process.platform === 'win32' ? 'codex.cmd' : 'codex';
   const defaultClaudeBin = process.platform === 'win32' ? 'claude.cmd' : 'claude';
-  const backend = (process.env.BRIDGE_BACKEND || 'codex').trim().toLowerCase();
+  const backend = (process.env.BRIDGE_BACKEND || 'claude').trim().toLowerCase();
   if (!['codex', 'claude'].includes(backend)) {
     throw new Error(`Unsupported BRIDGE_BACKEND: ${backend}`);
   }

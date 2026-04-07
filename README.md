@@ -2,14 +2,14 @@
 
 # feishu-cli-bridge
 
-**Feishu Frontend for direct Codex CLI and Claude Code execution**
+**Feishu Frontend for direct Claude Code and Codex CLI execution**
 
-*Forward Feishu bot messages to your local Codex CLI or Claude Code CLI, execute on the real machine, send results back.*
+*Forward Feishu bot messages to your local Claude Code CLI (default) or Codex CLI, execute on the real machine, send results back.*
 
-[![Built with Codex](https://img.shields.io/badge/Built%20with-Codex-1f6feb)](https://github.com/openai/codex)
+[![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-7C3AED)](https://claude.ai/code)
 [![Runtime](https://img.shields.io/badge/Runtime-Node%2022-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Interface](https://img.shields.io/badge/Interface-Feishu-00B96B)](https://www.feishu.cn/)
-[![Backend](https://img.shields.io/badge/Backend-Codex%20CLI-black)](https://github.com/openai/codex)
+[![Backend](https://img.shields.io/badge/Backend-Claude%20(default)%20%2B%20Codex%20compatible-black)](https://github.com/wwb1942/feishu-cli-bridge)
 
 </div>
 
@@ -58,17 +58,18 @@ Fill in your Feishu app credentials, then run:
 node src/launcher.js .env.feishu-direct
 ```
 
-Choose backend in the env file:
+Choose backend in the env file (default is Claude):
+
+```dotenv
+BRIDGE_BACKEND=claude
+```
+
+Codex compatibility mode:
 
 ```dotenv
 BRIDGE_BACKEND=codex
 ```
 
-or
-
-```dotenv
-BRIDGE_BACKEND=claude
-```
 
 Or use npm:
 
@@ -94,7 +95,7 @@ Unix/macOS convenience wrapper:
 
 Inbound:
 - Feishu image/file messages are downloaded into the local `data/media/` tree.
-- Image attachments are also passed into `codex exec` via `--image`.
+- Image attachments are also passed into `codex exec` via `--image` when using the Codex backend.
 - Pure placeholder media events like `[image]` are queued and merged with the next real text message from the same user.
 - Duplicate inbound Feishu events are deduplicated with persisted state plus per-event atomic claim files, so retries, short restarts, and accidental multi-process overlap do not replay the same user message.
 - Assistant-originated `im.message.receive_v1` events are ignored, so the bot does not consume its own outbound replies.
@@ -126,7 +127,7 @@ FEISHU_APP_SECRET=...
 Optional:
 
 ```dotenv
-BRIDGE_BACKEND=codex
+BRIDGE_BACKEND=claude
 
 FEISHU_DOMAIN=feishu
 FEISHU_ENCRYPT_KEY=
@@ -165,8 +166,16 @@ DATA_DIR=/root/projects/wechat-codex-bridge/data/default
 PROJECT_ROOT=/root/projects/wechat-codex-bridge
 ```
 
+Run Claude and Codex side-by-side safely:
+- Use separate Feishu bot app credentials (different bot app IDs).
+- Use separate env files (for example `.env.feishu-claude` and `.env.feishu-codex`).
+- Use separate `FEISHU_ACCOUNT_ID` values.
+- Use separate `DATA_DIR` values to avoid lock/session/dedupe collisions.
+- Run each profile as a separate process.
+
 Notes:
 - `BRIDGE_BACKEND=claude` expects a working local `claude` CLI that is already authenticated and configured.
+- `BRIDGE_BACKEND=codex` keeps compatibility with existing Codex-based deployments.
 - `CLAUDE_ALLOWED_TOOLS` is the main switch that decides whether Claude can actually read files or run shell commands from Feishu requests.
 
 ---
@@ -198,7 +207,7 @@ Notes:
 
 - The bridge core is now cross-platform at the Node.js level.
 - `node src/launcher.js <env-file>` is the recommended startup path on Linux, macOS, and Windows.
-- On Windows, the default `CODEX_BIN` is `codex.cmd`; on Unix-like systems it defaults to `codex`.
+- On Windows, defaults are `CODEX_BIN=codex.cmd` and `CLAUDE_BIN=claude.cmd`; on Unix-like systems they default to `codex` and `claude`.
 - `run-feishu-direct.ps1` is provided as a native PowerShell launcher for Windows.
 - `run-feishu-direct.sh` remains as a Unix convenience wrapper only.
 - The previous Linux-only `/proc` lock dependency has been removed.
