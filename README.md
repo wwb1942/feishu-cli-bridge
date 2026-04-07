@@ -2,9 +2,9 @@
 
 # feishu-cli-bridge
 
-**Feishu Frontend for direct Codex CLI execution**
+**Feishu Frontend for direct Codex CLI and Claude Code execution**
 
-*Forward Feishu bot messages to your local Codex CLI, execute on the real machine, send results back.*
+*Forward Feishu bot messages to your local Codex CLI or Claude Code CLI, execute on the real machine, send results back.*
 
 [![Built with Codex](https://img.shields.io/badge/Built%20with-Codex-1f6feb)](https://github.com/openai/codex)
 [![Runtime](https://img.shields.io/badge/Runtime-Node%2022-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
@@ -17,11 +17,11 @@
 
 ## What This Is
 
-A standalone Feishu frontend for `codex exec`.
+A standalone Feishu frontend for local CLI agents.
 
-It does **not** depend on OpenClaw bindings or JARVIS routing. The bridge opens a Feishu WebSocket connection using your bot app credentials, receives direct messages, stores short per-user history locally, calls `codex exec`, and sends the reply back to the same Feishu conversation.
+It does **not** depend on OpenClaw bindings or JARVIS routing. The bridge opens a Feishu WebSocket connection using your bot app credentials, receives direct messages, stores short per-user history locally, calls either `codex exec` or `claude -p`, and sends the reply back to the same Feishu conversation.
 
-> **Core rule:** one Feishu bot = one Codex bridge process = one local Codex execution environment.
+> **Core rule:** one Feishu bot = one bridge process = one local execution environment.
 
 ---
 
@@ -30,10 +30,10 @@ It does **not** depend on OpenClaw bindings or JARVIS routing. The bridge opens 
 | Feature | Description |
 |---|---|
 | **Direct Feishu bridge** | Receives `im.message.receive_v1` over Feishu WebSocket |
-| **Real Codex execution** | Runs `codex exec` on the machine that owns files and credentials |
+| **Selectable CLI backend** | Runs either `codex exec` or `claude -p` on the machine that owns files and credentials |
 | **Session continuity** | Per-peer JSON history under `data/sessions/` |
-| **Inbound media download** | Feishu images/files are saved locally and exposed to Codex |
-| **Outbound media send** | Codex can return `[[image:/abs/path]]` / `[[file:/abs/path]]` markers |
+| **Inbound media download** | Feishu images/files are saved locally and exposed to the selected backend |
+| **Outbound media send** | The backend can return `[[image:/abs/path]]` / `[[file:/abs/path]]` markers |
 | **Dedicated bot profile** | Separate env file and launcher for an isolated bot |
 
 ---
@@ -56,6 +56,18 @@ Fill in your Feishu app credentials, then run:
 
 ```bash
 node src/launcher.js .env.feishu-direct
+```
+
+Choose backend in the env file:
+
+```dotenv
+BRIDGE_BACKEND=codex
+```
+
+or
+
+```dotenv
+BRIDGE_BACKEND=claude
 ```
 
 Or use npm:
@@ -90,7 +102,7 @@ Inbound:
 - Only one bridge process may hold the `DATA_DIR/bridge.lock` instance lock at a time. A second copy exits instead of double-consuming the same Feishu stream.
 
 Outbound:
-- If Codex wants to send media back, it should emit markers in the final text:
+- If the backend wants to send media back, it should emit markers in the final text:
 
 ```text
 [[image:/absolute/path/to/image.png]]
@@ -98,7 +110,7 @@ Outbound:
 ```
 
 - Keep any normal user-facing text outside those marker lines.
-- Image questions use a shorter history window and lower reasoning effort by default to avoid long stalls.
+- Media-heavy questions use a shorter retained history window to avoid long stalls.
 
 ---
 
@@ -114,6 +126,8 @@ FEISHU_APP_SECRET=...
 Optional:
 
 ```dotenv
+BRIDGE_BACKEND=codex
+
 FEISHU_DOMAIN=feishu
 FEISHU_ENCRYPT_KEY=
 FEISHU_VERIFICATION_TOKEN=
@@ -136,9 +150,24 @@ CODEX_TIMEOUT_MS=180000
 CODEX_MAX_IMAGE_DIMENSION=1280
 CODEX_BRIDGE_SYSTEM_PROMPT=You are Codex in a Feishu bot bridge. Reply concisely and helpfully in plain text. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]].
 
+CLAUDE_BIN=claude
+CLAUDE_MODEL=
+CLAUDE_EFFORT=
+CLAUDE_WORKDIR=/root/projects/wechat-codex-bridge
+CLAUDE_HISTORY_LIMIT=12
+CLAUDE_IMAGE_HISTORY_LIMIT=4
+CLAUDE_TIMEOUT_MS=240000
+CLAUDE_ALLOWED_TOOLS=Read,Glob,Grep,Bash
+CLAUDE_ADD_DIRS=
+CLAUDE_BRIDGE_SYSTEM_PROMPT=You are Claude in a Feishu bot bridge running on the user machine. Reply concisely and helpfully in plain text. Reply with final user-facing text only. Do not mention skills, workflow, or internal process. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]].
+
 DATA_DIR=/root/projects/wechat-codex-bridge/data/default
 PROJECT_ROOT=/root/projects/wechat-codex-bridge
 ```
+
+Notes:
+- `BRIDGE_BACKEND=claude` expects a working local `claude` CLI that is already authenticated and configured.
+- `CLAUDE_ALLOWED_TOOLS` is the main switch that decides whether Claude can actually read files or run shell commands from Feishu requests.
 
 ---
 
@@ -149,6 +178,8 @@ PROJECT_ROOT=/root/projects/wechat-codex-bridge
 | `src/feishu-adapter.js` | Feishu WebSocket + media download/upload + send/reply adapter |
 | `src/launcher.js` | Cross-platform env-file loader and bridge launcher |
 | `src/codex-runner.js` | Launches `codex exec` with rolling history and image attachments |
+| `src/claude-runner.js` | Launches `claude -p` with explicit tool allowances and JSON parsing |
+| `src/runner-utils.js` | Shared prompt builder and media marker parser |
 | `src/session-store.js` | Peer-scoped JSON session store |
 | `src/index.js` | Bridge entrypoint and queueing |
 | `src/config.js` | Environment/config loader |
