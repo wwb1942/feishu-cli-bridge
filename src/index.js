@@ -129,7 +129,6 @@ function getInboundEventKeys(inbound) {
   if (messageId) {
     keys.push(`message:${messageId}`);
   }
-  keys.push(`content:${buildInboundContentFingerprint(inbound)}`);
   return [...new Set(keys)];
 }
 
