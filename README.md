@@ -143,7 +143,7 @@ CODEX_BIN=codex
 CODEX_MODEL=gpt-5.4
 CODEX_REASONING_EFFORT=low
 CODEX_SANDBOX=workspace-write
-CODEX_WORKDIR=/root/projects/wechat-codex-bridge
+CODEX_WORKDIR=/path/to/your/workspace
 CODEX_HISTORY_LIMIT=12
 CODEX_MAX_IMAGE_ATTACHMENTS=4
 CODEX_IMAGE_HISTORY_LIMIT=4
@@ -154,7 +154,7 @@ CODEX_BRIDGE_SYSTEM_PROMPT=You are Codex in a Feishu bot bridge. Reply concisely
 CLAUDE_BIN=claude
 CLAUDE_MODEL=
 CLAUDE_EFFORT=
-CLAUDE_WORKDIR=/root/projects/wechat-codex-bridge
+CLAUDE_WORKDIR=/path/to/your/workspace
 CLAUDE_HISTORY_LIMIT=12
 CLAUDE_IMAGE_HISTORY_LIMIT=4
 CLAUDE_TIMEOUT_MS=240000
@@ -162,9 +162,11 @@ CLAUDE_ALLOWED_TOOLS=Read,Glob,Grep,Bash
 CLAUDE_ADD_DIRS=
 CLAUDE_BRIDGE_SYSTEM_PROMPT=You are Claude in a Feishu bot bridge running on the user machine. Reply concisely and helpfully in plain text. Reply with final user-facing text only. Do not mention skills, workflow, or internal process. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]].
 
-DATA_DIR=/root/projects/wechat-codex-bridge/data/default
-PROJECT_ROOT=/root/projects/wechat-codex-bridge
+DATA_DIR=/path/to/feishu-cli-bridge/data/default
+PROJECT_ROOT=/path/to/feishu-cli-bridge
 ```
+
+Replace those path examples with real paths on your own machine. `CODEX_WORKDIR` and `CLAUDE_WORKDIR` are the default working directories for agent execution, while `PROJECT_ROOT` and `DATA_DIR` should point at this bridge project and its local runtime data directory.
 
 Run Claude and Codex side-by-side safely:
 - Use separate Feishu bot app credentials (different bot app IDs).
