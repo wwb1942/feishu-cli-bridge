@@ -1,4 +1,5 @@
 const MEDIA_MARKER_RE = /^\[\[(image|file):(.+?)\]\]$/i;
+const DDS_TASK_RE = /dds|creditease\.corp/i;
 
 function buildHistoryText(history) {
   return history
@@ -17,8 +18,24 @@ function buildAttachmentSummary(attachments) {
     .join('\n');
 }
 
+function buildTaskExecutionHints(inbound) {
+  const text = inbound?.text || '';
+  if (!DDS_TASK_RE.test(text)) {
+    return [];
+  }
+
+  return [
+    'DDS task instructions:',
+    '1. Before any DDS browser interaction, run D:\\tools\\dds2-open.cmd to reuse the persistent DDS browser profile with saved login state.',
+    '2. After that, use D:\\tools\\playwright-cli.cmd commands against the already-open DDS browser session.',
+    '3. Do not create a fresh in-memory Playwright browser for DDS tasks.',
+    '4. If a screenshot is requested, save or copy the final image under D:\\projects\\output\\playwright and return that absolute path.',
+  ];
+}
+
 export function buildBridgePrompt(systemPrompt, history, inbound) {
   const historyText = buildHistoryText(history);
+  const executionHints = buildTaskExecutionHints(inbound);
   return [
     systemPrompt,
     '',
@@ -28,6 +45,7 @@ export function buildBridgePrompt(systemPrompt, history, inbound) {
     'Current user message:',
     inbound.text,
     '',
+    ...(executionHints.length > 0 ? [...executionHints, ''] : []),
     'Inbound attachments saved locally:',
     buildAttachmentSummary(inbound.attachments),
     '',

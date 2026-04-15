@@ -31,6 +31,11 @@ export function loadConfig() {
   }
 
   const claudeWorkdir = path.resolve(process.env.CLAUDE_WORKDIR || projectRoot);
+  const codexWorkdir = path.resolve(process.env.CODEX_WORKDIR || projectRoot);
+  const codexAdditionalDirs = [
+    codexWorkdir,
+    ...parseCsv(process.env.CODEX_ADD_DIRS || '').map((item) => path.resolve(item)),
+  ].filter((item, index, list) => list.indexOf(item) === index);
   const claudeAdditionalDirs = [
     claudeWorkdir,
     ...parseCsv(process.env.CLAUDE_ADD_DIRS || '').map((item) => path.resolve(item)),
@@ -50,7 +55,8 @@ export function loadConfig() {
       model: process.env.CODEX_MODEL || 'gpt-5.4',
       reasoningEffort: process.env.CODEX_REASONING_EFFORT || 'low',
       sandbox: process.env.CODEX_SANDBOX || 'workspace-write',
-      workdir: path.resolve(process.env.CODEX_WORKDIR || projectRoot),
+      workdir: codexWorkdir,
+      additionalDirs: codexAdditionalDirs,
       historyLimit: Number.parseInt(process.env.CODEX_HISTORY_LIMIT || '12', 10),
       imageHistoryLimit: Number.parseInt(process.env.CODEX_IMAGE_HISTORY_LIMIT || '4', 10),
       maxImageAttachments: Number.parseInt(process.env.CODEX_MAX_IMAGE_ATTACHMENTS || '4', 10),
