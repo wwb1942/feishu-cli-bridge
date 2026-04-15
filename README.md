@@ -198,6 +198,12 @@ Notes:
 
 ---
 
+## Acknowledgment
+
+Initial project framing and some README conventions were inspired by [telegram-cli-bridge](https://github.com/AliceLJY/telegram-cli-bridge). This repository is implemented as a standalone Feishu bridge with a different runtime architecture, direct Feishu WebSocket integration, and local CLI execution through `claude -p` or `codex exec`.
+
+---
+
 ## Security
 
 - Never commit `.env.feishu-direct`, `.env.local`, or any real credential file.
