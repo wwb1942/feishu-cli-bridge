@@ -1,5 +1,7 @@
 const MEDIA_MARKER_RE = /^\[\[(image|file):(.+?)\]\]$/i;
 const DDS_TASK_RE = /dds|creditease\.corp/i;
+const DISCUSSION_CONTROL_RE = /\[\[discussion-control:([\s\S]+?)\]\]/g;
+const VALID_DISCUSSION_PHASES = new Set(['stance', 'cross_exam', 'convergence', 'verdict']);
 
 function buildHistoryText(history) {
   return history
@@ -49,10 +51,46 @@ function buildDelegationHints(inbound) {
   ];
 }
 
+function buildDiscussionHints(inbound) {
+  const discussion = inbound?.meta?.discussion;
+  if (!discussion) {
+    return [];
+  }
+
+  if (discussion.role === 'host') {
+    return [
+      'Discussion host context:',
+      `1. Shared task id: [task:${discussion.taskId}]`,
+      `2. Current phase: ${discussion.phase}`,
+      `3. Participant bots: ${(discussion.participantBotOpenIds || []).join(', ') || '(none)'}`,
+      `4. Original human question: ${discussion.questionText || '(none)'}`,
+      `5. Stance results: ${JSON.stringify(discussion.stanceByParticipantBotOpenId || {})}`,
+      `6. Unresponsive participants: ${(discussion.unresponsiveParticipantBotOpenIds || []).join(', ') || '(none)'}`,
+      `7. Prior phase summaries: ${JSON.stringify(discussion.phaseSummaries || [])}`,
+      `8. Recent discussion events: ${JSON.stringify(discussion.recentEvents || [])}`,
+      `9. Current bot-message budget: ${discussion.botMessageCount}/${discussion.policy?.maxBotMessages}`,
+      '10. Reply with exactly one [[discussion-control:{...}]] marker.',
+    ];
+  }
+
+  if (discussion.role === 'participant') {
+    return [
+      'Discussion participant context:',
+      `1. Shared task id: [task:${discussion.taskId}]`,
+      `2. Original human question: ${discussion.originalQuestion || '(none)'}`,
+      `3. Current delegated focus: ${discussion.focus || '(none)'}`,
+      `4. Keep the visible result starting with [task:${discussion.taskId}].`,
+    ];
+  }
+
+  return [];
+}
+
 export function buildBridgePrompt(systemPrompt, history, inbound) {
   const historyText = buildHistoryText(history);
   const executionHints = buildTaskExecutionHints(inbound);
   const delegationHints = buildDelegationHints(inbound);
+  const discussionHints = buildDiscussionHints(inbound);
   return [
     systemPrompt,
     '',
@@ -64,6 +102,7 @@ export function buildBridgePrompt(systemPrompt, history, inbound) {
     '',
     ...(executionHints.length > 0 ? [...executionHints, ''] : []),
     ...(delegationHints.length > 0 ? [...delegationHints, ''] : []),
+    ...(discussionHints.length > 0 ? [...discussionHints, ''] : []),
     'Inbound attachments saved locally:',
     buildAttachmentSummary(inbound.attachments),
     '',
@@ -94,4 +133,61 @@ export function extractMediaMarkers(rawReply) {
     text: textLines.join('\n').trim(),
     media,
   };
+}
+
+export function parseDiscussionControlReply(text = '') {
+  const matches = [...text.matchAll(DISCUSSION_CONTROL_RE)];
+  if (matches.length === 0) {
+    return {
+      visibleText: text.trim(),
+      control: null,
+      hasMarker: false,
+      malformed: false,
+    };
+  }
+
+  const visibleText = text.replace(DISCUSSION_CONTROL_RE, '').trim();
+  if (matches.length !== 1) {
+    return {
+      visibleText,
+      control: null,
+      hasMarker: true,
+      malformed: true,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(matches[0][1]);
+    const nextPhase = VALID_DISCUSSION_PHASES.has(parsed?.nextPhase) ? parsed.nextPhase : '';
+    if (!nextPhase) {
+      throw new Error('Invalid nextPhase');
+    }
+
+    const delegations = Array.isArray(parsed?.delegations)
+      ? parsed.delegations
+        .filter(item => item?.targetBotOpenId && item?.instruction)
+        .map(item => ({
+          targetBotOpenId: String(item.targetBotOpenId).trim(),
+          instruction: String(item.instruction).trim(),
+        }))
+      : [];
+
+    return {
+      visibleText,
+      control: {
+        nextPhase,
+        delegations,
+        publicSummary: typeof parsed?.publicSummary === 'string' ? parsed.publicSummary.trim() : '',
+      },
+      hasMarker: true,
+      malformed: false,
+    };
+  } catch {
+    return {
+      visibleText,
+      control: null,
+      hasMarker: true,
+      malformed: true,
+    };
+  }
 }

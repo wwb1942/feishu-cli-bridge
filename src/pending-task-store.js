@@ -12,6 +12,20 @@ function normalizeState(state) {
   };
 }
 
+function getDiscussionTask(state, taskId) {
+  const task = state.tasks?.[taskId];
+  if (!task || task.kind !== 'discussion') {
+    return null;
+  }
+  task.pendingParticipantBotOpenIds ||= [];
+  task.participantDeadlinesByBotOpenId ||= {};
+  task.phaseSummaries ||= [];
+  task.recentEvents ||= [];
+  task.stanceByParticipantBotOpenId ||= {};
+  task.unresponsiveParticipantBotOpenIds ||= [];
+  return task;
+}
+
 export async function loadPendingTasks(filePath) {
   try {
     const raw = JSON.parse(await fs.readFile(filePath, 'utf8'));
@@ -69,6 +83,8 @@ export function createDiscussionTask(state, task) {
     unresponsiveParticipantBotOpenIds: [...(task.unresponsiveParticipantBotOpenIds || [])],
     phaseSummaries: [...(task.phaseSummaries || [])],
     recentEvents: [...(task.recentEvents || [])].slice(-DEFAULT_RECENT_EVENTS_CAP),
+    pendingParticipantBotOpenIds: [...(task.pendingParticipantBotOpenIds || [])],
+    participantDeadlinesByBotOpenId: { ...(task.participantDeadlinesByBotOpenId || {}) },
     policy,
   };
   state.tasks ||= {};
@@ -118,7 +134,7 @@ export function markTaskStatus(state, taskId, status, options = {}) {
 }
 
 export function setDiscussionPhase(state, taskId, phase, options = {}) {
-  const task = state.tasks?.[taskId];
+  const task = getDiscussionTask(state, taskId);
   if (!task) {
     return null;
   }
@@ -129,12 +145,176 @@ export function setDiscussionPhase(state, taskId, phase, options = {}) {
 }
 
 export function incrementBotMessageCount(state, taskId, amount = 1) {
-  const task = state.tasks?.[taskId];
+  const task = getDiscussionTask(state, taskId);
   if (!task) {
     return null;
   }
   task.botMessageCount = Number(task.botMessageCount || 0) + amount;
   return task;
+}
+
+export function appendDiscussionEvent(state, taskId, event, options = {}) {
+  const task = getDiscussionTask(state, taskId);
+  if (!task) {
+    return null;
+  }
+  const now = Number(options.now) || Date.now();
+  const cap = Number(options.cap) || DEFAULT_RECENT_EVENTS_CAP;
+  const nextEvent = {
+    createdAt: now,
+    ...event,
+  };
+  task.recentEvents.push(nextEvent);
+  task.recentEvents = task.recentEvents.slice(-cap);
+  task.updatedAt = now;
+  return nextEvent;
+}
+
+export function summarizePhaseOutcome(state, taskId, summary, options = {}) {
+  const task = getDiscussionTask(state, taskId);
+  if (!task || !summary) {
+    return null;
+  }
+  const now = Number(options.now) || Date.now();
+  const entry = {
+    phase: options.phase || task.phase,
+    summary,
+    createdAt: now,
+  };
+  task.phaseSummaries.push(entry);
+  task.updatedAt = now;
+  return entry;
+}
+
+export function buildDiscussionContext(task, options = {}) {
+  const cap = Number(options.cap) || DEFAULT_RECENT_EVENTS_CAP;
+  return {
+    taskId: task.taskId,
+    phase: task.phase,
+    participantBotOpenIds: [...(task.participantBotOpenIds || [])],
+    questionText: task.questionText || '',
+    stanceByParticipantBotOpenId: { ...(task.stanceByParticipantBotOpenId || {}) },
+    unresponsiveParticipantBotOpenIds: [...(task.unresponsiveParticipantBotOpenIds || [])],
+    phaseSummaries: [...(task.phaseSummaries || [])],
+    recentEvents: [...(task.recentEvents || [])].slice(-cap),
+    botMessageCount: Number(task.botMessageCount || 0),
+    policy: {
+      maxBotMessages: Number(task.policy?.maxBotMessages) || 20,
+      maxDurationMs: Number(task.policy?.maxDurationMs) || 900_000,
+    },
+  };
+}
+
+export function isDiscussionGuardrailReached(task, now = Date.now()) {
+  const maxBotMessages = Number(task?.policy?.maxBotMessages) || 20;
+  const maxDurationMs = Number(task?.policy?.maxDurationMs) || 900_000;
+  if (Number(task?.botMessageCount || 0) >= maxBotMessages) {
+    return { reached: true, reason: 'message-budget' };
+  }
+  if (Number(task?.createdAt || 0) + maxDurationMs <= now || Number(task?.deadlineAt || 0) <= now) {
+    return { reached: true, reason: 'duration' };
+  }
+  return { reached: false, reason: '' };
+}
+
+export function markDiscussionParticipantsPending(state, taskId, participantBotOpenIds, deadlineAt, options = {}) {
+  const task = getDiscussionTask(state, taskId);
+  if (!task) {
+    return null;
+  }
+  const now = Number(options.now) || Date.now();
+  const nextPending = new Set(task.pendingParticipantBotOpenIds || []);
+  for (const botOpenId of participantBotOpenIds || []) {
+    if (!botOpenId) {
+      continue;
+    }
+    nextPending.add(botOpenId);
+    task.participantDeadlinesByBotOpenId[botOpenId] = deadlineAt;
+  }
+  task.pendingParticipantBotOpenIds = [...nextPending];
+  task.updatedAt = now;
+  return task;
+}
+
+export function clearDiscussionParticipantPending(state, taskId, botOpenId, options = {}) {
+  const task = getDiscussionTask(state, taskId);
+  if (!task || !botOpenId) {
+    return null;
+  }
+  const now = Number(options.now) || Date.now();
+  task.pendingParticipantBotOpenIds = (task.pendingParticipantBotOpenIds || []).filter((item) => item !== botOpenId);
+  delete task.participantDeadlinesByBotOpenId[botOpenId];
+  task.updatedAt = now;
+  return task;
+}
+
+export function recordDiscussionParticipantResult(state, taskId, botOpenId, text, options = {}) {
+  const task = getDiscussionTask(state, taskId);
+  if (!task || !botOpenId) {
+    return null;
+  }
+  const now = Number(options.now) || Date.now();
+  const normalizedText = text?.trim() || '';
+
+  clearDiscussionParticipantPending(state, taskId, botOpenId, { now });
+
+  if (task.phase === 'stance') {
+    task.stanceByParticipantBotOpenId[botOpenId] = normalizedText;
+  }
+
+  appendDiscussionEvent(state, taskId, {
+    type: 'participant_result',
+    phase: task.phase,
+    actorBotOpenId: botOpenId,
+    summary: normalizedText,
+  }, { now });
+
+  task.updatedAt = now;
+  return task;
+}
+
+export function markTimedOutDiscussionParticipants(state, now = Date.now()) {
+  const records = [];
+  for (const task of Object.values(state.tasks || {})) {
+    if (!task || task.kind !== 'discussion' || task.status !== 'active') {
+      continue;
+    }
+
+    task.pendingParticipantBotOpenIds ||= [];
+    task.participantDeadlinesByBotOpenId ||= {};
+    task.unresponsiveParticipantBotOpenIds ||= [];
+
+    const expiredBotOpenIds = task.pendingParticipantBotOpenIds.filter((botOpenId) => {
+      const deadlineAt = Number(task.participantDeadlinesByBotOpenId?.[botOpenId]) || 0;
+      return deadlineAt > 0 && deadlineAt <= now;
+    });
+
+    if (expiredBotOpenIds.length === 0) {
+      continue;
+    }
+
+    for (const botOpenId of expiredBotOpenIds) {
+      if (!task.unresponsiveParticipantBotOpenIds.includes(botOpenId)) {
+        task.unresponsiveParticipantBotOpenIds.push(botOpenId);
+      }
+      clearDiscussionParticipantPending(state, task.taskId, botOpenId, { now });
+      appendDiscussionEvent(state, task.taskId, {
+        type: 'timeout',
+        phase: task.phase,
+        targetBotOpenId: botOpenId,
+        summary: `Participant ${botOpenId} timed out.`,
+      }, { now });
+    }
+
+    task.updatedAt = now;
+    records.push({
+      task,
+      participantBotOpenIds: expiredBotOpenIds,
+      readyForHost: task.pendingParticipantBotOpenIds.length === 0,
+    });
+  }
+
+  return records;
 }
 
 export function pruneExpiredPendingTasks(state, now = Date.now()) {
