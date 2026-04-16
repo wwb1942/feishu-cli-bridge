@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
+const ASSISTANT_DELEGATE_PREFIX_RE = /^\s*\[delegate\]\s*\[task:[a-z0-9_-]+\]\s*/i;
+const ASSISTANT_TASK_PREFIX_RE = /^\s*\[task:[a-z0-9_-]+\]\s*/i;
+
 function createLogger(prefix) {
   return {
     info(message, extra) {
@@ -67,6 +70,73 @@ function parseMessageContent(message) {
   } catch {
     return {};
   }
+}
+
+export function extractMentionOpenIds(message) {
+  return (message?.mentions || [])
+    .map((mention) => mention?.id?.open_id || '')
+    .filter(Boolean);
+}
+
+export function buildReplyTarget(meta = {}) {
+  if (meta.chatType === 'group') {
+    return {
+      receiveIdType: 'chat_id',
+      receiveId: meta.chatId,
+    };
+  }
+
+  return {
+    receiveIdType: 'open_id',
+    receiveId: meta.senderOpenId,
+  };
+}
+
+export function shouldForwardAssistantGroupMessage(text = '') {
+  return ASSISTANT_DELEGATE_PREFIX_RE.test(text) || ASSISTANT_TASK_PREFIX_RE.test(text);
+}
+
+function firstNonEmpty(values) {
+  return values.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+}
+
+function extractBotOpenIdFromResponse(response) {
+  return firstNonEmpty([
+    response?.open_id,
+    response?.bot_open_id,
+    response?.data?.open_id,
+    response?.data?.bot_open_id,
+    response?.data?.app?.open_id,
+    response?.data?.app?.bot_open_id,
+    response?.data?.app?.bot?.open_id,
+    response?.data?.bot?.open_id,
+  ]);
+}
+
+export async function resolveBotIdentity(client, config = {}) {
+  const configuredBotOpenId = typeof config.botOpenId === 'string' ? config.botOpenId.trim() : '';
+  if (configuredBotOpenId) {
+    return configuredBotOpenId;
+  }
+
+  const resolvers = [
+    async () => client?.bot?.v3?.info?.get?.(),
+    async () => client?.application?.v6?.application?.get?.({ path: { app_id: config.appId } }),
+  ];
+
+  for (const resolver of resolvers) {
+    try {
+      const response = await resolver();
+      const botOpenId = extractBotOpenIdFromResponse(response);
+      if (botOpenId) {
+        return botOpenId;
+      }
+    } catch {
+      // Fall through to the next resolver or return empty if none succeed.
+    }
+  }
+
+  return '';
 }
 
 function splitText(text, chunkChars) {
@@ -296,6 +366,13 @@ async function createMessage(client, tracker, payload) {
 export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
   const log = createLogger('feishu-bridge');
   const client = createClient(config);
+  const resolvedBotOpenId = await resolveBotIdentity(client, config);
+  if (resolvedBotOpenId) {
+    config.botOpenId = resolvedBotOpenId;
+  }
+  if (config.groupDelegationEnabled && !config.botOpenId) {
+    throw new Error('Failed to resolve FEISHU_BOT_OPEN_ID for group delegation');
+  }
   const wsClient = createWsClient(config);
   const dispatcher = createDispatcher(config);
   const recentOutbound = createRecentOutboundTracker();
@@ -320,16 +397,20 @@ export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
         log.info(`ignored outbound echo by message id for ${message.message_id}`);
         return;
       }
+      const text = parseInboundText(message);
       const senderType = event?.sender?.sender_type || '';
-      if (senderType === 'ASSISTANT') {
+      if (senderType === 'ASSISTANT' && (
+        !config.groupDelegationEnabled
+        || !shouldForwardAssistantGroupMessage(text)
+      )) {
         log.info(`ignored assistant echo for ${message.message_id}`);
         return;
       }
-      const text = parseInboundText(message);
       const chatId = message.chat_id;
       const messageId = message.message_id;
       const chatType = message.chat_type;
       const senderOpenId = event?.sender?.sender_id?.open_id || '';
+      const mentionOpenIds = extractMentionOpenIds(message);
       Promise.resolve()
         .then(async () => {
           const attachment = await downloadInboundAttachment(client, message, config, mediaDir).catch((error) => {
@@ -353,6 +434,7 @@ export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
               contentFingerprint: buildContentFingerprint(message),
               senderOpenId,
               senderType,
+              mentionOpenIds,
             },
           });
         })
@@ -371,12 +453,15 @@ export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
 
   return {
     async sendReply(target, reply, replyMeta) {
+      const replyTarget = typeof target === 'string'
+        ? { receiveIdType: 'open_id', receiveId: target }
+        : target;
       const textChunks = splitText(reply.text || '', config.chunkChars).filter(Boolean);
       for (const [index, chunk] of textChunks.entries()) {
         await createMessage(client, recentOutbound, {
-          params: { receive_id_type: 'open_id' },
+          params: { receive_id_type: replyTarget.receiveIdType },
           data: {
-            receive_id: target,
+            receive_id: replyTarget.receiveId,
             content: JSON.stringify({ text: chunk }),
             msg_type: 'text',
             uuid: buildOutboundUuid(replyMeta, 'text', index),
@@ -389,8 +474,8 @@ export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
           const imageKey = await uploadImage(client, media.path);
           const payload = { content: JSON.stringify({ image_key: imageKey }), msg_type: 'image' };
           await createMessage(client, recentOutbound, {
-            params: { receive_id_type: 'open_id' },
-            data: { receive_id: target, ...payload, uuid: buildOutboundUuid(replyMeta, 'image', index) },
+            params: { receive_id_type: replyTarget.receiveIdType },
+            data: { receive_id: replyTarget.receiveId, ...payload, uuid: buildOutboundUuid(replyMeta, 'image', index) },
           });
           continue;
         }
@@ -398,8 +483,8 @@ export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
         const fileKey = await uploadFile(client, media.path);
         const payload = { content: JSON.stringify({ file_key: fileKey }), msg_type: 'file' };
         await createMessage(client, recentOutbound, {
-          params: { receive_id_type: 'open_id' },
-          data: { receive_id: target, ...payload, uuid: buildOutboundUuid(replyMeta, 'file', index) },
+          params: { receive_id_type: replyTarget.receiveIdType },
+          data: { receive_id: replyTarget.receiveId, ...payload, uuid: buildOutboundUuid(replyMeta, 'file', index) },
         });
       }
     },
