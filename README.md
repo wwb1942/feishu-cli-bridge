@@ -278,14 +278,16 @@ Run Claude and Codex side-by-side safely:
 |---|---|
 | `src/feishu-adapter.js` | Feishu WebSocket, media download/upload, and send/reply adapter |
 | `src/bridge-app.js` | Bridge bootstrap, inbound dedupe, claim handling, and media merge flow |
-| `src/bridge-runtime.js` | Route-aware runtime for direct chat and delegated task execution |
+| `src/bridge-runtime.js` | Route-aware runtime for direct chat, explicit delegation, and hosted discussion orchestration |
+| `src/group-routing.js` | Group routing, protocol marker parsing, host election, and session-key construction |
 | `src/launcher.js` | Cross-platform env-file loader and bridge launcher |
 | `src/codex-runner.js` | Launches `codex exec` with rolling history and image attachments |
 | `src/claude-runner.js` | Launches `claude -p` with explicit tool allowances and JSON parsing |
 | `src/runner-utils.js` | Shared prompt builder and media marker parser |
+| `src/pending-task-store.js` | JSON persistence for delegation/discussion task state and out-of-order result recovery |
 | `src/session-store.js` | JSON storage for conversations, inbound claims, and process lock state |
 | `src/config.js` | Environment/config loader |
-| `src/index.js` | Bridge entrypoint |
+| `src/index.js` | Process entrypoint and shutdown wiring |
 | `run-feishu-direct.ps1` | Windows PowerShell launcher for dedicated bot profiles |
 | `run-feishu-direct.sh` | Unix/macOS launcher for dedicated bot profiles |
 
