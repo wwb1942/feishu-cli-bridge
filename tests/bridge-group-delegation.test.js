@@ -101,9 +101,9 @@ test('assistant task result reconciles pending state and does not run model exec
 test('origin bot sends delegation, creates pending task, and posts confirmation only on success', async () => {
   const harness = await createBridgeHarness({
     runReplyQueue: [{
-      text: '[delegate] [task:abc123] @bot-b investigate this',
+      text: '[delegate] [task:abc123] @ou_bot_b investigate this',
       media: [],
-      raw: '[delegate] [task:abc123] @bot-b investigate this',
+      raw: '[delegate] [task:abc123] @ou_bot_b investigate this',
     }],
   });
 
@@ -118,15 +118,16 @@ test('origin bot sends delegation, creates pending task, and posts confirmation 
   assert.equal(harness.pendingState.tasks.abc123.status, 'pending');
   assert.equal(harness.sentReplies.length, 2);
   assert.match(harness.sentReplies[0].reply.text, /^\[delegate\] \[task:abc123\]/);
+  assert.deepEqual(harness.sentReplies[0].replyMeta.mentionOpenIds, ['ou_bot_b']);
   assert.match(harness.sentReplies[1].reply.text, /Delegated/i);
 });
 
 test('origin bot posts a send-failure exception when delegation send fails', async () => {
   const harness = await createBridgeHarness({
     runReplyQueue: [{
-      text: '[delegate] [task:abc123] @bot-b investigate this',
+      text: '[delegate] [task:abc123] @ou_bot_b investigate this',
       media: [],
-      raw: '[delegate] [task:abc123] @bot-b investigate this',
+      raw: '[delegate] [task:abc123] @ou_bot_b investigate this',
     }],
     sendFailures: [new Error('delegate send failed')],
   });
@@ -146,9 +147,9 @@ test('origin bot posts a send-failure exception when delegation send fails', asy
 test('delegation wait-timeout posts a timeout notice to the same group', async () => {
   const harness = await createBridgeHarness({
     runReplyQueue: [{
-      text: '[delegate] [task:abc123] @bot-b investigate this',
+      text: '[delegate] [task:abc123] @ou_bot_b investigate this',
       media: [],
-      raw: '[delegate] [task:abc123] @bot-b investigate this',
+      raw: '[delegate] [task:abc123] @ou_bot_b investigate this',
     }],
   });
 
@@ -218,9 +219,9 @@ test('direct-message flow still replies to open_id', async () => {
 test('out-of-order delegated result is buffered and reconciled when the pending task appears later', async () => {
   const harness = await createBridgeHarness({
     runReplyQueue: [{
-      text: '[delegate] [task:abc123] @bot-b investigate this',
+      text: '[delegate] [task:abc123] @ou_bot_b investigate this',
       media: [],
-      raw: '[delegate] [task:abc123] @bot-b investigate this',
+      raw: '[delegate] [task:abc123] @ou_bot_b investigate this',
     }],
   });
 

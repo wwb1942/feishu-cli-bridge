@@ -30,6 +30,7 @@ import { parseDiscussionControlReply } from './runner-utils.js';
 
 const DELEGATE_TASK_RE = /^\s*\[delegate\]\s*\[task:([a-z0-9_-]+)\]\s*/i;
 const RESULT_TASK_RE = /^\s*\[task:([a-z0-9_-]+)\]\s*/i;
+const OPEN_ID_MENTION_RE = /@((?:ou|on)_[A-Za-z0-9_-]+)/g;
 
 function extractDelegateTaskId(text = '') {
   return text.match(DELEGATE_TASK_RE)?.[1] || '';
@@ -41,6 +42,12 @@ function extractResultTaskId(text = '') {
 
 function stripLeadingTaskMarker(text = '') {
   return text.replace(RESULT_TASK_RE, '').trim();
+}
+
+function extractMentionOpenIdsFromText(text = '') {
+  return [...text.matchAll(OPEN_ID_MENTION_RE)]
+    .map((match) => match[1])
+    .filter((value, index, list) => list.indexOf(value) === index);
 }
 
 function summarizeAttachments(attachments) {
@@ -292,6 +299,7 @@ export async function createBridgeRuntime(deps) {
     for (const delegation of delegations) {
       await sendReplyToChat(task.chatId, buildDiscussionDelegationReply(task, delegation), {
         messageId: replyMeta.messageId || task.originMessageId,
+        mentionOpenIds: [delegation.targetBotOpenId],
       });
       appendDiscussionEvent(taskState, taskId, {
         type: 'delegation_sent',
@@ -523,7 +531,10 @@ export async function createBridgeRuntime(deps) {
       await persistTaskState();
 
       try {
-        await sendReplyForInbound(inbound, reply, { messageId: inbound.meta.messageId });
+        await sendReplyForInbound(inbound, reply, {
+          messageId: inbound.meta.messageId,
+          mentionOpenIds: extractMentionOpenIdsFromText(reply.text),
+        });
         await sendReplyForInbound(inbound, buildDelegationConfirmation(taskId), {
           messageId: inbound.meta.messageId,
         });

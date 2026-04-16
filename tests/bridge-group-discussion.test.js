@@ -81,6 +81,8 @@ test('host discussion request creates task, uses a discussion session, and drive
   assert.equal(harness.sentReplies.length, 3);
   assert.match(harness.sentReplies[0].reply.text, new RegExp(`^\\[delegate\\] \\[task:${taskId}\\]`));
   assert.match(harness.sentReplies[1].reply.text, new RegExp(`^\\[delegate\\] \\[task:${taskId}\\]`));
+  assert.deepEqual(harness.sentReplies[0].replyMeta.mentionOpenIds, ['ou_a']);
+  assert.deepEqual(harness.sentReplies[1].replyMeta.mentionOpenIds, ['ou_b']);
   assert.equal(harness.sentReplies[2].reply.text, 'Collecting initial positions.');
 
   await harness.handleInbound(makeInbound({
@@ -117,6 +119,7 @@ test('host discussion request creates task, uses a discussion session, and drive
   );
   assert.equal(harness.sentReplies.length, 5);
   assert.match(harness.sentReplies[3].reply.text, new RegExp(`^\\[delegate\\] \\[task:${taskId}\\]`));
+  assert.deepEqual(harness.sentReplies[3].replyMeta.mentionOpenIds, ['ou_a']);
   assert.equal(harness.sentReplies[4].reply.text, 'Examining the core disagreement.');
 
   await harness.handleInbound(makeInbound({
