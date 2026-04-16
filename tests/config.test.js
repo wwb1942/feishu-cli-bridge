@@ -83,3 +83,31 @@ test('reads group delegation and discussion config keys', async () => {
   assert.equal(config.feishu.discussionMaxBotMessages, 42);
   assert.equal(config.feishu.discussionMaxDurationMs, 67890);
 });
+
+test('rejects invalid numeric config values with descriptive errors', async () => {
+  const { loadConfig } = await import('../src/config.js');
+
+  assert.throws(
+    () => withEnv(
+      {
+        FEISHU_APP_ID: 'test-app-id',
+        FEISHU_APP_SECRET: 'test-app-secret',
+        FEISHU_DELEGATE_TIMEOUT_MS: '-1',
+      },
+      () => loadConfig(),
+    ),
+    /FEISHU_DELEGATE_TIMEOUT_MS/i,
+  );
+
+  assert.throws(
+    () => withEnv(
+      {
+        FEISHU_APP_ID: 'test-app-id',
+        FEISHU_APP_SECRET: 'test-app-secret',
+        CODEX_TIMEOUT_MS: 'not-a-number',
+      },
+      () => loadConfig(),
+    ),
+    /CODEX_TIMEOUT_MS/i,
+  );
+});

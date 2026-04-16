@@ -10,6 +10,9 @@ const ASSISTANT_TASK_PREFIX_RE = /^\s*\[task:[a-z0-9_-]+\]\s*/i;
 
 function createLogger(prefix) {
   return {
+    debug(message, extra) {
+      console.log(`[${prefix}] ${message}`, extra || '');
+    },
     info(message, extra) {
       console.log(`[${prefix}] ${message}`, extra || '');
     },
@@ -72,6 +75,31 @@ function parseMessageContent(message) {
   }
 }
 
+function normalizeLogger(logger = {}) {
+  return {
+    debug: typeof logger.debug === 'function' ? logger.debug.bind(logger) : (() => {}),
+    warn: typeof logger.warn === 'function' ? logger.warn.bind(logger) : (() => {}),
+  };
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function unique(values) {
+  return [...new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function assertInboundByteLimit(byteLength, maxBytes) {
+  if (Number.isInteger(maxBytes) && maxBytes > 0 && byteLength > maxBytes) {
+    throw new Error(`Inbound payload exceeds FEISHU_MAX_INBOUND_BYTES (${byteLength} > ${maxBytes} bytes).`);
+  }
+}
+
+function getUtf8ByteLength(value) {
+  return Buffer.byteLength(String(value || ''), 'utf8');
+}
+
 export function extractMentionOpenIds(message) {
   return (message?.mentions || [])
     .map((mention) => mention?.id?.open_id || '')
@@ -96,6 +124,22 @@ export function shouldForwardAssistantGroupMessage(text = '') {
   return ASSISTANT_DELEGATE_PREFIX_RE.test(text) || ASSISTANT_TASK_PREFIX_RE.test(text);
 }
 
+export function serializeTextForFeishu(text = '', mentionOpenIds = []) {
+  const ids = unique(mentionOpenIds);
+  if (ids.length === 0) {
+    return text;
+  }
+
+  let serialized = text;
+  for (const openId of ids.sort((left, right) => right.length - left.length)) {
+    serialized = serialized.replace(
+      new RegExp(`@${escapeRegExp(openId)}(?![A-Za-z0-9_-])`, 'g'),
+      `<at user_id="${openId}"></at>`,
+    );
+  }
+  return serialized;
+}
+
 function firstNonEmpty(values) {
   return values.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
 }
@@ -113,29 +157,41 @@ function extractBotOpenIdFromResponse(response) {
   ]);
 }
 
-export async function resolveBotIdentity(client, config = {}) {
+export async function resolveBotIdentity(client, config = {}, logger = {}) {
+  const log = normalizeLogger(logger);
   const configuredBotOpenId = typeof config.botOpenId === 'string' ? config.botOpenId.trim() : '';
   if (configuredBotOpenId) {
+    log.debug('Using configured FEISHU_BOT_OPEN_ID.');
     return configuredBotOpenId;
   }
 
   const resolvers = [
-    async () => client?.bot?.v3?.info?.get?.(),
-    async () => client?.application?.v6?.application?.get?.({ path: { app_id: config.appId } }),
+    {
+      name: 'bot.v3.info.get',
+      run: async () => client?.bot?.v3?.info?.get?.(),
+    },
+    {
+      name: 'application.v6.application.get',
+      run: async () => client?.application?.v6?.application?.get?.({ path: { app_id: config.appId } }),
+    },
   ];
 
   for (const resolver of resolvers) {
     try {
-      const response = await resolver();
+      log.debug(`Attempting bot identity resolver ${resolver.name}.`);
+      const response = await resolver.run();
       const botOpenId = extractBotOpenIdFromResponse(response);
       if (botOpenId) {
+        log.debug(`Resolved bot identity via ${resolver.name}.`);
         return botOpenId;
       }
-    } catch {
-      // Fall through to the next resolver or return empty if none succeed.
+      log.debug(`Bot identity resolver ${resolver.name} returned no open id.`);
+    } catch (error) {
+      log.warn(`Bot identity resolver ${resolver.name} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
+  log.warn('Unable to resolve bot identity from configured Feishu resolvers.');
   return '';
 }
 
@@ -152,26 +208,34 @@ function splitText(text, chunkChars) {
   return chunks;
 }
 
-async function readFeishuResponseBuffer(response) {
+async function readFeishuResponseBuffer(response, maxBytes = Number.POSITIVE_INFINITY) {
   const responseAny = response;
   if (responseAny.code !== undefined && responseAny.code !== 0) {
     throw new Error(responseAny.msg || `code ${responseAny.code}`);
   }
 
   if (Buffer.isBuffer(response)) {
+    assertInboundByteLimit(response.length, maxBytes);
     return response;
   }
   if (response instanceof ArrayBuffer) {
-    return Buffer.from(response);
+    const buffer = Buffer.from(response);
+    assertInboundByteLimit(buffer.length, maxBytes);
+    return buffer;
   }
   if (responseAny.data && Buffer.isBuffer(responseAny.data)) {
+    assertInboundByteLimit(responseAny.data.length, maxBytes);
     return responseAny.data;
   }
   if (typeof responseAny.getReadableStream === 'function') {
     const stream = responseAny.getReadableStream();
     const chunks = [];
+    let totalLength = 0;
     for await (const chunk of stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalLength += buffer.length;
+      assertInboundByteLimit(totalLength, maxBytes);
+      chunks.push(buffer);
     }
     return Buffer.concat(chunks);
   }
@@ -179,6 +243,7 @@ async function readFeishuResponseBuffer(response) {
     const tempPath = path.join(os.tmpdir(), `feishu-bridge-${Date.now()}-${Math.random().toString(16).slice(2)}.bin`);
     await responseAny.writeFile(tempPath);
     const buffer = await fs.readFile(tempPath);
+    assertInboundByteLimit(buffer.length, maxBytes);
     await fs.unlink(tempPath).catch(() => {});
     return buffer;
   }
@@ -201,7 +266,7 @@ async function saveAttachment(buffer, outputDir, fileName) {
   return filePath;
 }
 
-async function downloadInboundAttachment(client, message, config, mediaDir) {
+export async function downloadInboundAttachment(client, message, config, mediaDir) {
   const content = parseMessageContent(message);
   const messageId = message.message_id;
   const messageType = message.message_type;
@@ -216,7 +281,7 @@ async function downloadInboundAttachment(client, message, config, mediaDir) {
       path: { message_id: messageId, file_key: imageKey },
       params: { type: 'image' },
     });
-    const buffer = await readFeishuResponseBuffer(response);
+    const buffer = await readFeishuResponseBuffer(response, config.maxInboundBytes);
     const fileName = sanitizeFileName(content.file_name, `${messageId || 'image'}.png`);
     const filePath = await saveAttachment(buffer, attachmentDir, fileName);
     return { kind: 'image', path: filePath, fileName };
@@ -232,7 +297,7 @@ async function downloadInboundAttachment(client, message, config, mediaDir) {
       path: { message_id: messageId, file_key: fileKey },
       params: { type: resourceType },
     });
-    const buffer = await readFeishuResponseBuffer(response);
+    const buffer = await readFeishuResponseBuffer(response, config.maxInboundBytes);
     const fallbackName = messageType === 'audio' ? `${messageId || 'audio'}.opus` : `${messageId || 'file'}.bin`;
     const fileName = sanitizeFileName(content.file_name, fallbackName);
     const filePath = await saveAttachment(buffer, attachmentDir, fileName);
@@ -366,7 +431,7 @@ async function createMessage(client, tracker, payload) {
 export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
   const log = createLogger('feishu-bridge');
   const client = createClient(config);
-  const resolvedBotOpenId = await resolveBotIdentity(client, config);
+  const resolvedBotOpenId = await resolveBotIdentity(client, config, log);
   if (resolvedBotOpenId) {
     config.botOpenId = resolvedBotOpenId;
   }
@@ -395,6 +460,10 @@ export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
       }
       if (recentOutbound.has(message.message_id)) {
         log.info(`ignored outbound echo by message id for ${message.message_id}`);
+        return;
+      }
+      if (getUtf8ByteLength(message.content) > config.maxInboundBytes) {
+        log.warn(`ignored inbound message ${message.message_id || '-'} because content exceeds FEISHU_MAX_INBOUND_BYTES`);
         return;
       }
       const text = parseInboundText(message);
@@ -456,7 +525,10 @@ export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
       const replyTarget = typeof target === 'string'
         ? { receiveIdType: 'open_id', receiveId: target }
         : target;
-      const textChunks = splitText(reply.text || '', config.chunkChars).filter(Boolean);
+      const textChunks = splitText(
+        serializeTextForFeishu(reply.text || '', replyMeta?.mentionOpenIds || []),
+        config.chunkChars,
+      ).filter(Boolean);
       for (const [index, chunk] of textChunks.entries()) {
         await createMessage(client, recentOutbound, {
           params: { receive_id_type: replyTarget.receiveIdType },

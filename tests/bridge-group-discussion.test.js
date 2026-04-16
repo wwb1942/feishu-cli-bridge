@@ -81,6 +81,8 @@ test('host discussion request creates task, uses a discussion session, and drive
   assert.equal(harness.sentReplies.length, 3);
   assert.match(harness.sentReplies[0].reply.text, new RegExp(`^\\[delegate\\] \\[task:${taskId}\\]`));
   assert.match(harness.sentReplies[1].reply.text, new RegExp(`^\\[delegate\\] \\[task:${taskId}\\]`));
+  assert.deepEqual(harness.sentReplies[0].replyMeta.mentionOpenIds, ['ou_a']);
+  assert.deepEqual(harness.sentReplies[1].replyMeta.mentionOpenIds, ['ou_b']);
   assert.equal(harness.sentReplies[2].reply.text, 'Collecting initial positions.');
 
   await harness.handleInbound(makeInbound({
@@ -117,6 +119,7 @@ test('host discussion request creates task, uses a discussion session, and drive
   );
   assert.equal(harness.sentReplies.length, 5);
   assert.match(harness.sentReplies[3].reply.text, new RegExp(`^\\[delegate\\] \\[task:${taskId}\\]`));
+  assert.deepEqual(harness.sentReplies[3].replyMeta.mentionOpenIds, ['ou_a']);
   assert.equal(harness.sentReplies[4].reply.text, 'Examining the core disagreement.');
 
   await harness.handleInbound(makeInbound({
@@ -222,9 +225,15 @@ test('host runner timeout during discussion falls back to a forced verdict and c
   }));
 
   const [taskId] = Object.keys(harness.pendingState.tasks);
+  const forcedVerdict = harness.sentReplies.at(-1).reply.text;
   assert.equal(harness.runReplyCalls.length, 1);
   assert.equal(harness.pendingState.tasks[taskId].status, 'timed_out');
-  assert.match(harness.sentReplies.at(-1).reply.text, /forced verdict|timed out|available input/i);
+  assert.match(forcedVerdict, new RegExp(`Forced verdict for \\[task:${taskId}\\]`));
+  assert.match(forcedVerdict, /Original question:\s*@bot @a @b compare these approaches/);
+  assert.match(forcedVerdict, /Available evidence:\s*- No participant stances were captured\./);
+  assert.match(forcedVerdict, /Missing participants:\s*- ou_a\s*- ou_b/);
+  assert.match(forcedVerdict, /Safest current recommendation:\s*- Retry the discussion with clearer delegated prompts or ask a human to decide directly\./);
+  assert.match(forcedVerdict, /Reason:\s*- host runner timed out after 5000ms/);
 });
 
 test('ordinary group user sessions stay isolated from hosted discussion sessions in the same chat', async () => {

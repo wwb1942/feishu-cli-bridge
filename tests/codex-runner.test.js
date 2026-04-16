@@ -46,6 +46,14 @@ test('buildCodexExecArgs appends add-dir flags for codex additional dirs', async
   ]);
 });
 
+test('getCodexOutputDir uses the repository-specific Feishu workspace directory', async () => {
+  const { getCodexOutputDir } = await import('../src/codex-runner.js');
+  assert.equal(
+    getCodexOutputDir({ workdir: 'D:/projects' }),
+    path.join('D:/projects', '.feishu-codex-bridge'),
+  );
+});
+
 test('waitForCodexOutput resolves from a stable last-message file even if the process does not exit', async () => {
   const { waitForCodexOutput } = await import('../src/codex-runner.js');
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-runner-'));

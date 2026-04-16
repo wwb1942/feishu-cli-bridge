@@ -17,7 +17,7 @@ import {
 
 const MEDIA_PLACEHOLDER_RE = /^\[(image|file|audio|media|message)\]$/i;
 const RECENT_MEDIA_TTL_MS = 10 * 60 * 1000;
-const IMAGE_REFERENCE_RE = /(杩欏紶|鍥剧墖|鍥鹃噷|鎴浘|杩欏箙|杩欏浘|photo|image|picture|attachment|闄勪欢)/i;
+const IMAGE_REFERENCE_RE = /(这张|图片|图里|截图|这幅|这图|photo|image|picture|attachment|附件)/i;
 
 function isPlaceholderOnlyMessage(text) {
   return MEDIA_PLACEHOLDER_RE.test((text || '').trim());
@@ -143,7 +143,11 @@ export async function startBridgeApp(options) {
 
   function getRecentMediaForPeer(peerId) {
     const entries = recentMedia.get(peerId) || [];
-    return entries.length > 0 ? [entries[entries.length - 1]] : [];
+    if (entries.length === 0) {
+      return [];
+    }
+    const { rememberedAt, ...attachment } = entries[entries.length - 1];
+    return [attachment];
   }
 
   async function waitForPendingMedia(peerId) {

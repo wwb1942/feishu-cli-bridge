@@ -15,6 +15,26 @@ function parseCsv(value) {
     .filter(Boolean);
 }
 
+function parseIntegerEnv(name, fallback, options = {}) {
+  const rawValue = process.env[name];
+  const text = typeof rawValue === 'string' && rawValue.trim()
+    ? rawValue.trim()
+    : String(fallback);
+  const value = Number.parseInt(text, 10);
+
+  if (!Number.isInteger(value)) {
+    throw new Error(`Invalid ${name}: expected an integer value.`);
+  }
+  if (options.min !== undefined && value < options.min) {
+    throw new Error(`Invalid ${name}: expected a value >= ${options.min}.`);
+  }
+  if (options.max !== undefined && value > options.max) {
+    throw new Error(`Invalid ${name}: expected a value <= ${options.max}.`);
+  }
+
+  return value;
+}
+
 export function loadConfig() {
   const projectRoot = path.resolve(process.env.PROJECT_ROOT || process.cwd());
   const dataDir = path.resolve(process.env.DATA_DIR || path.join(projectRoot, 'data'));
@@ -57,11 +77,11 @@ export function loadConfig() {
       sandbox: process.env.CODEX_SANDBOX || 'workspace-write',
       workdir: codexWorkdir,
       additionalDirs: codexAdditionalDirs,
-      historyLimit: Number.parseInt(process.env.CODEX_HISTORY_LIMIT || '12', 10),
-      imageHistoryLimit: Number.parseInt(process.env.CODEX_IMAGE_HISTORY_LIMIT || '4', 10),
-      maxImageAttachments: Number.parseInt(process.env.CODEX_MAX_IMAGE_ATTACHMENTS || '4', 10),
-      timeoutMs: Number.parseInt(process.env.CODEX_TIMEOUT_MS || '180000', 10),
-      maxImageDimension: Number.parseInt(process.env.CODEX_MAX_IMAGE_DIMENSION || '1280', 10),
+      historyLimit: parseIntegerEnv('CODEX_HISTORY_LIMIT', 12, { min: 1 }),
+      imageHistoryLimit: parseIntegerEnv('CODEX_IMAGE_HISTORY_LIMIT', 4, { min: 1 }),
+      maxImageAttachments: parseIntegerEnv('CODEX_MAX_IMAGE_ATTACHMENTS', 4, { min: 1 }),
+      timeoutMs: parseIntegerEnv('CODEX_TIMEOUT_MS', 180000, { min: 1000 }),
+      maxImageDimension: parseIntegerEnv('CODEX_MAX_IMAGE_DIMENSION', 1280, { min: 64 }),
       systemPrompt: process.env.CODEX_BRIDGE_SYSTEM_PROMPT || 'You are Codex in a Feishu bot bridge. Reply concisely and helpfully in plain text. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]]. Keep any user-visible text outside those markers.',
     },
     claude: {
@@ -70,9 +90,9 @@ export function loadConfig() {
       planModel: process.env.CLAUDE_PLAN_MODEL || 'claude-opus-4-6',
       effort: process.env.CLAUDE_EFFORT || '',
       workdir: claudeWorkdir,
-      historyLimit: Number.parseInt(process.env.CLAUDE_HISTORY_LIMIT || '12', 10),
-      imageHistoryLimit: Number.parseInt(process.env.CLAUDE_IMAGE_HISTORY_LIMIT || '4', 10),
-      timeoutMs: Number.parseInt(process.env.CLAUDE_TIMEOUT_MS || '240000', 10),
+      historyLimit: parseIntegerEnv('CLAUDE_HISTORY_LIMIT', 12, { min: 1 }),
+      imageHistoryLimit: parseIntegerEnv('CLAUDE_IMAGE_HISTORY_LIMIT', 4, { min: 1 }),
+      timeoutMs: parseIntegerEnv('CLAUDE_TIMEOUT_MS', 240000, { min: 1000 }),
       allowedTools: parseCsv(process.env.CLAUDE_ALLOWED_TOOLS || 'Read,Glob,Grep,Bash'),
       additionalDirs: claudeAdditionalDirs,
       systemPrompt: process.env.CLAUDE_BRIDGE_SYSTEM_PROMPT || 'You are Claude in a Feishu bot bridge running on the user machine. Reply concisely and helpfully in plain text. Reply with final user-facing text only. Do not mention skills, workflow, or internal process. If you want to return media, emit one marker per line: [[image:/absolute/path]] or [[file:/absolute/path]].',
@@ -85,16 +105,16 @@ export function loadConfig() {
       verificationToken: process.env.FEISHU_VERIFICATION_TOKEN || '',
       groupDelegationEnabled: /^true$/i.test(process.env.FEISHU_GROUP_DELEGATION_ENABLED || ''),
       botOpenId: process.env.FEISHU_BOT_OPEN_ID || '',
-      delegateTimeoutMs: Number.parseInt(process.env.FEISHU_DELEGATE_TIMEOUT_MS || '300000', 10),
+      delegateTimeoutMs: parseIntegerEnv('FEISHU_DELEGATE_TIMEOUT_MS', 300000, { min: 1000 }),
       discussionHostBotOpenId: process.env.FEISHU_DISCUSSION_HOST_BOT_OPEN_ID || '',
-      discussionMaxBotMessages: Number.parseInt(process.env.FEISHU_DISCUSSION_MAX_BOT_MESSAGES || '20', 10),
-      discussionMaxDurationMs: Number.parseInt(process.env.FEISHU_DISCUSSION_MAX_DURATION_MS || '900000', 10),
-      chunkChars: Number.parseInt(process.env.FEISHU_REPLY_CHUNK_CHARS || '1400', 10),
+      discussionMaxBotMessages: parseIntegerEnv('FEISHU_DISCUSSION_MAX_BOT_MESSAGES', 20, { min: 1 }),
+      discussionMaxDurationMs: parseIntegerEnv('FEISHU_DISCUSSION_MAX_DURATION_MS', 900000, { min: 1000 }),
+      chunkChars: parseIntegerEnv('FEISHU_REPLY_CHUNK_CHARS', 1400, { min: 1 }),
       accountId: process.env.FEISHU_ACCOUNT_ID || 'custom-1',
-      maxInboundBytes: Number.parseInt(process.env.FEISHU_MAX_INBOUND_BYTES || String(30 * 1024 * 1024), 10),
-      inboundDedupWindowMs: Number.parseInt(process.env.FEISHU_INBOUND_DEDUP_WINDOW_MS || '12000', 10),
-      inboundProcessingTtlMs: Number.parseInt(process.env.FEISHU_INBOUND_PROCESSING_TTL_MS || '300000', 10),
-      inboundRepliedTtlMs: Number.parseInt(process.env.FEISHU_INBOUND_REPLIED_TTL_MS || '86400000', 10),
+      maxInboundBytes: parseIntegerEnv('FEISHU_MAX_INBOUND_BYTES', 30 * 1024 * 1024, { min: 1 }),
+      inboundDedupWindowMs: parseIntegerEnv('FEISHU_INBOUND_DEDUP_WINDOW_MS', 12000, { min: 1 }),
+      inboundProcessingTtlMs: parseIntegerEnv('FEISHU_INBOUND_PROCESSING_TTL_MS', 300000, { min: 1 }),
+      inboundRepliedTtlMs: parseIntegerEnv('FEISHU_INBOUND_REPLIED_TTL_MS', 86400000, { min: 1 }),
     },
   };
 }

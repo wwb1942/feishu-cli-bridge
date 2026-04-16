@@ -245,8 +245,12 @@ export function buildCodexExecArgs(config, lastMessageFile) {
   return args;
 }
 
+export function getCodexOutputDir(config) {
+  return path.join(config.workdir, '.feishu-codex-bridge');
+}
+
 export async function runCodexReply(config, history, inbound) {
-  const outputDir = path.join(config.workdir, '.wechat-codex-bridge');
+  const outputDir = getCodexOutputDir(config);
   await fs.mkdir(outputDir, { recursive: true });
   const lastMessageFile = path.join(outputDir, 'last-message.txt');
   await fs.rm(lastMessageFile, { force: true });

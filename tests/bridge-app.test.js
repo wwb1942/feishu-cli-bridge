@@ -164,3 +164,76 @@ test('startBridgeApp keeps placeholder media until the next text message for the
   assert.equal(runtimeInbounds.length, 1);
   assert.deepEqual(runtimeInbounds[0].attachments, [{ kind: 'image', path: 'D:/tmp/input.png', fileName: 'input.png' }]);
 });
+
+test('startBridgeApp reuses recent media when the follow-up asks about 这张图', async () => {
+  const { startBridgeApp } = await import('../src/bridge-app.js');
+  const runtimeInbounds = [];
+  let inboundHandler;
+
+  await startBridgeApp({
+    config: buildConfig(),
+    backendConfig: { historyLimit: 12, imageHistoryLimit: 4 },
+    runReply: async () => ({ text: 'unused', media: [], raw: 'unused' }),
+    startBridge: async (feishuConfig, _mediaDir, onInboundMessage) => {
+      feishuConfig.botOpenId = 'ou_resolved_bot';
+      inboundHandler = onInboundMessage;
+      return {
+        sendReply: async () => ({ data: { message_id: 'om_reply_1' } }),
+      };
+    },
+    createRuntime: async () => ({
+      handleInbound: async inbound => {
+        runtimeInbounds.push(inbound);
+        return { route: { kind: 'group_user_request' } };
+      },
+      sweepTimeouts: async () => [],
+      stop: async () => {},
+    }),
+    ensureSessionStore: async () => {},
+    acquireProcessLock: async () => async () => {},
+    loadInboundState: async () => ({ events: {} }),
+    saveInboundState: async () => {},
+    claimInboundEvent: async (_claimsDir, eventKey) => ({
+      accepted: true,
+      filePath: `claim:${eventKey}`,
+    }),
+    updateInboundEventClaim: async () => {},
+    releaseInboundEventClaim: async () => {},
+    fsImpl: {
+      mkdir: async () => {},
+    },
+    mediaMergeWaitMs: 5,
+    mediaMergePollMs: 1,
+  });
+
+  await inboundHandler(buildInbound({
+    text: '[image]',
+    attachments: [{ kind: 'image', path: 'D:/tmp/input.png', fileName: 'input.png' }],
+    meta: {
+      ...buildInbound().meta,
+      messageId: 'om_media',
+      eventId: 'evt_media',
+    },
+  }));
+
+  await inboundHandler(buildInbound({
+    text: 'please summarize this later',
+    meta: {
+      ...buildInbound().meta,
+      messageId: 'om_text_1',
+      eventId: 'evt_text_1',
+    },
+  }));
+
+  await inboundHandler(buildInbound({
+    text: '看这张图',
+    meta: {
+      ...buildInbound().meta,
+      messageId: 'om_text_2',
+      eventId: 'evt_text_2',
+    },
+  }));
+
+  assert.equal(runtimeInbounds.length, 2);
+  assert.deepEqual(runtimeInbounds[1].attachments, [{ kind: 'image', path: 'D:/tmp/input.png', fileName: 'input.png' }]);
+});
