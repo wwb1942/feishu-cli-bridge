@@ -566,6 +566,22 @@ export async function createBridgeRuntime(deps) {
       pendingTask,
     });
 
+    if (
+      route.kind === 'ignore'
+      && inbound.meta.chatType === 'group'
+      && inbound.meta.senderType === 'ASSISTANT'
+      && resultTaskId
+    ) {
+      await reconcilePendingTaskResult(resultTaskId, inbound);
+      return {
+        route: {
+          kind: 'group_delegate_result',
+          taskId: resultTaskId,
+          hostBotOpenId: '',
+        },
+      };
+    }
+
     if (route.kind === 'ignore') {
       return { route };
     }

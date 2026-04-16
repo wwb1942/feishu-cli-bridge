@@ -90,6 +90,34 @@ test('createDiscussionTask freezes policy and initializes active discussion stat
   assert.deepEqual(task.recentEvents, []);
 });
 
+test('createDiscussionTask keeps an immutable policy snapshot even if the source object changes later', () => {
+  const state = { tasks: {}, earlyResults: {} };
+  const policy = {
+    maxBotMessages: 20,
+    maxDurationMs: 900000,
+  };
+
+  const task = createDiscussionTask(state, {
+    taskId: 'disc123',
+    chatId: 'oc_chat',
+    originMessageId: 'om_1',
+    requesterOpenId: 'ou_user',
+    hostBotOpenId: 'ou_host',
+    participantBotOpenIds: ['ou_a'],
+    createdAt: 1000,
+    questionText: 'compare approaches',
+    policy,
+  });
+
+  policy.maxBotMessages = 5;
+  policy.maxDurationMs = 1000;
+
+  assert.deepEqual(task.policy, {
+    maxBotMessages: 20,
+    maxDurationMs: 900000,
+  });
+});
+
 test('upsertEarlyResult stores unmatched task results with expiry and consumeEarlyResult removes them', () => {
   const state = { tasks: {}, earlyResults: {} };
   const envelope = { taskId: 'abc123', text: '[task:abc123] done' };

@@ -226,3 +226,126 @@ test('host runner timeout during discussion falls back to a forced verdict and c
   assert.equal(harness.pendingState.tasks[taskId].status, 'timed_out');
   assert.match(harness.sentReplies.at(-1).reply.text, /forced verdict|timed out|available input/i);
 });
+
+test('ordinary group user sessions stay isolated from hosted discussion sessions in the same chat', async () => {
+  const harness = await createBridgeHarness({
+    runReplyQueue: [
+      {
+        text: 'Discussion verdict with no further coordination.',
+        media: [],
+        raw: 'Discussion verdict with no further coordination.',
+      },
+      {
+        text: 'Ordinary group reply.',
+        media: [],
+        raw: 'Ordinary group reply.',
+      },
+    ],
+  });
+
+  await harness.handleInbound(makeInbound({
+    text: '@bot @a compare these approaches',
+    meta: {
+      mentionOpenIds: ['ou_bot', 'ou_a'],
+    },
+  }));
+
+  const discussionSessionKey = harness.runReplyCalls[0].inbound.meta.sessionKey;
+  assert.match(discussionSessionKey, /^group:oc_chat:discussion:/);
+
+  await harness.handleInbound(makeInbound({
+    text: '@bot ordinary follow-up',
+    meta: {
+      mentionOpenIds: ['ou_bot'],
+      messageId: 'om_followup',
+      eventId: 'oe_followup',
+    },
+  }));
+
+  assert.equal(harness.runReplyCalls[1].inbound.meta.sessionKey, 'group:oc_chat:user:ou_user:bot:ou_bot');
+  assert.notEqual(harness.runReplyCalls[1].inbound.meta.sessionKey, discussionSessionKey);
+});
+
+test('malformed host control marker falls back safely to a visible verdict instead of looping', async () => {
+  const harness = await createBridgeHarness({
+    runReplyQueue: [{
+      text: 'Fallback verdict after malformed control.\n[[discussion-control:{bad json}]]',
+      media: [],
+      raw: '',
+    }],
+  });
+
+  await harness.handleInbound(makeInbound({
+    text: '@bot @a compare these approaches',
+    meta: {
+      mentionOpenIds: ['ou_bot', 'ou_a'],
+    },
+  }));
+
+  const [taskId] = Object.keys(harness.pendingState.tasks);
+  assert.equal(harness.runReplyCalls.length, 1);
+  assert.equal(harness.pendingState.tasks[taskId].status, 'completed');
+  assert.equal(harness.sentReplies.at(-1).reply.text, 'Fallback verdict after malformed control.');
+});
+
+test('host discussion context stays bounded to the most recent task events', async () => {
+  const recentEvents = Array.from({ length: 12 }, (_, index) => ({
+    type: 'participant_result',
+    phase: 'cross_exam',
+    actorBotOpenId: `ou_${index}`,
+    summary: `event-${index}`,
+    createdAt: 1000 + index,
+  }));
+
+  const harness = await createBridgeHarness({
+    pendingState: {
+      tasks: {
+        disc123: {
+          taskId: 'disc123',
+          kind: 'discussion',
+          chatId: 'oc_chat',
+          originMessageId: 'om_disc',
+          requesterOpenId: 'ou_user',
+          hostBotOpenId: 'ou_bot',
+          participantBotOpenIds: ['ou_a'],
+          status: 'active',
+          createdAt: 1000,
+          deadlineAt: 901000,
+          phase: 'cross_exam',
+          botMessageCount: 3,
+          questionText: 'compare these approaches',
+          stanceByParticipantBotOpenId: { ou_a: 'option A' },
+          unresponsiveParticipantBotOpenIds: [],
+          phaseSummaries: [],
+          recentEvents,
+          pendingParticipantBotOpenIds: [],
+          participantDeadlinesByBotOpenId: {},
+          policy: {
+            maxBotMessages: 20,
+            maxDurationMs: 900000,
+          },
+        },
+      },
+      earlyResults: {},
+    },
+    runReplyQueue: [{
+      text: 'Final bounded verdict.',
+      media: [],
+      raw: 'Final bounded verdict.',
+    }],
+  });
+
+  await harness.handleInbound(makeInbound({
+    text: '[task:disc123] participant update',
+    meta: {
+      senderType: 'ASSISTANT',
+      senderOpenId: 'ou_a',
+      mentionOpenIds: [],
+      messageId: 'om_participant',
+      eventId: 'oe_participant',
+    },
+  }));
+
+  assert.equal(harness.runReplyCalls.length, 1);
+  assert.equal(harness.runReplyCalls[0].inbound.meta.discussion.recentEvents.length, 10);
+});

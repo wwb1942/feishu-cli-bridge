@@ -214,3 +214,41 @@ test('direct-message flow still replies to open_id', async () => {
     receiveId: 'ou_user',
   });
 });
+
+test('out-of-order delegated result is buffered and reconciled when the pending task appears later', async () => {
+  const harness = await createBridgeHarness({
+    runReplyQueue: [{
+      text: '[delegate] [task:abc123] @bot-b investigate this',
+      media: [],
+      raw: '[delegate] [task:abc123] @bot-b investigate this',
+    }],
+  });
+
+  await harness.handleInbound(makeInbound({
+    text: '[task:abc123] delegated result arrived early',
+    meta: {
+      chatType: 'group',
+      senderType: 'ASSISTANT',
+      senderOpenId: 'ou_delegate_bot',
+      mentionOpenIds: [],
+      messageId: 'om_early',
+      eventId: 'oe_early',
+    },
+  }));
+
+  assert.equal(harness.runReplyCalls.length, 0);
+  assert.equal(harness.pendingState.earlyResults.abc123?.taskId, 'abc123');
+
+  await harness.handleInbound(makeInbound({
+    text: '@bot handle this',
+    meta: {
+      chatType: 'group',
+      mentionOpenIds: ['ou_bot'],
+      messageId: 'om_request',
+      eventId: 'oe_request',
+    },
+  }));
+
+  assert.equal(harness.pendingState.tasks.abc123.status, 'completed');
+  assert.equal(harness.pendingState.earlyResults.abc123, undefined);
+});
