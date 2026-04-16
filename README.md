@@ -46,6 +46,7 @@ Before starting, make sure the host machine has:
 | **Inbound media download** | Feishu images/files are saved locally and exposed to the selected backend |
 | **Outbound media send** | The backend can return `[[image:/abs/path]]` / `[[file:/abs/path]]` markers |
 | **Opt-in group delegation** | Supports explicit protocol-marked delegated tasks in Feishu groups |
+| **Hosted group discussion** | Supports host-led multi-bot discussion with bounded stance, cross-exam, and verdict phases |
 | **Dedicated bot profile** | Separate env file and launcher for isolated bot deployments |
 
 ---
@@ -77,6 +78,12 @@ FEISHU_APP_SECRET=...
 BRIDGE_BACKEND=claude
 ```
 
+To enable group delegation and hosted multi-bot discussion:
+
+```dotenv
+FEISHU_GROUP_DELEGATION_ENABLED=true
+```
+
 Switch to Codex backend:
 
 ```dotenv
@@ -106,6 +113,41 @@ Unix/macOS convenience wrapper:
 ```bash
 ./run-feishu-direct.sh
 ```
+
+---
+
+## Group Collaboration Protocol
+
+Group collaboration is opt-in. Enable it with:
+
+```dotenv
+FEISHU_GROUP_DELEGATION_ENABLED=true
+```
+
+Once enabled:
+
+- Human -> bot execution uses a real Feishu `@bot` mention in the group.
+- Bot -> bot delegation requires a leading `[delegate] [task:<id>]` prefix and a real Feishu mention of the target bot.
+- Delegated bot results must start with `[task:<id>]` so the origin or host bot can reconcile task state.
+- Only the elected host bot handles the original multi-bot discussion request.
+- Non-host participants ignore the original human message and wait for delegated prompts from the host.
+- Moderated discussion is host-led and bounded. It does not allow free bot-to-bot chatter.
+- Task ids are used for reconciliation, timeout tracking, and out-of-order result recovery.
+- The origin bot only posts a delegation confirmation, a send failure, or a wait-timeout notice.
+- The delegated bot posts the final success or failure result in the group.
+
+Host election for discussions is deterministic:
+
+- If `FEISHU_DISCUSSION_HOST_BOT_OPEN_ID` is set and that bot is mentioned, it becomes host.
+- Otherwise the first mentioned bot becomes host.
+- If mention order is unavailable, the host falls back to lexicographic `open_id` order.
+
+Discussion flow:
+
+- `stance`: the host asks each participant for an initial position
+- `cross_exam`: the host sends targeted follow-up challenges or questions
+- `convergence`: the host narrows disagreements and prepares a conclusion
+- `verdict`: the host posts one final group answer
 
 ---
 
@@ -158,6 +200,12 @@ DATA_DIR=/path/to/feishu-cli-bridge/data/default
 FEISHU_DOMAIN=feishu
 FEISHU_ENCRYPT_KEY=
 FEISHU_VERIFICATION_TOKEN=
+FEISHU_GROUP_DELEGATION_ENABLED=false
+FEISHU_BOT_OPEN_ID=
+FEISHU_DELEGATE_TIMEOUT_MS=300000
+FEISHU_DISCUSSION_HOST_BOT_OPEN_ID=
+FEISHU_DISCUSSION_MAX_BOT_MESSAGES=20
+FEISHU_DISCUSSION_MAX_DURATION_MS=900000
 FEISHU_ACCOUNT_ID=custom-1
 FEISHU_REPLY_CHUNK_CHARS=1400
 FEISHU_MAX_INBOUND_BYTES=31457280
@@ -204,6 +252,11 @@ Notes:
 - `BRIDGE_BACKEND=claude` expects a working local `claude` CLI that is already authenticated and configured.
 - `BRIDGE_BACKEND=codex` expects a working local `codex` CLI that is already authenticated and configured.
 - `CLAUDE_ALLOWED_TOOLS` is the main switch that decides whether Claude can actually read files or run shell commands from Feishu requests.
+- `FEISHU_GROUP_DELEGATION_ENABLED=true` turns on both explicit group delegation and hosted multi-bot discussion.
+- `FEISHU_BOT_OPEN_ID` is optional. If unset, the bridge tries to resolve the current bot identity at startup.
+- `FEISHU_DELEGATE_TIMEOUT_MS` controls how long the origin or host waits for a delegated result before posting a timeout notice.
+- `FEISHU_DISCUSSION_HOST_BOT_OPEN_ID` optionally pins the host bot when that bot is mentioned.
+- `FEISHU_DISCUSSION_MAX_BOT_MESSAGES` and `FEISHU_DISCUSSION_MAX_DURATION_MS` bound discussion length.
 
 ---
 
