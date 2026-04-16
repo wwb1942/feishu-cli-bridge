@@ -61,6 +61,7 @@ npm install
 ```
 
 2. Create a Feishu app in the [Feishu Open Platform Developer Console](https://open.feishu.cn/app), then copy the app credentials from the console.
+   Enable the app's bot capability and subscribe to the `im.message.receive_v1` event before starting the bridge.
 
 3. Prepare an env file:
 
@@ -255,7 +256,7 @@ Initial project framing and some README conventions were inspired by [telegram-c
 
 ## License
 
-This repository does not currently include a `LICENSE` file. Until one is added, treat the code as not yet licensed for general redistribution or reuse.
+This project is released under the MIT License. See [LICENSE](./LICENSE).
 
 ---
 
@@ -263,7 +264,7 @@ This repository does not currently include a `LICENSE` file. Until one is added,
 
 - Never commit `.env.feishu-direct`, `.env.local`, or any real credential file.
 - Keep bot credentials only in local env files or your process manager.
-- `data/`, `.wechat-codex-bridge/`, `node_modules/`, and `*.bak.*` are excluded from git.
+- `data/`, `node_modules/`, and `*.bak.*` are excluded from git.
 - Before publishing, run a quick secret scan on the repo and verify only placeholder values remain in `.env.example`.
 
 ---
