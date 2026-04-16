@@ -113,18 +113,59 @@ function buildDiscussionDelegationReply(task, delegation) {
   };
 }
 
+function buildDiscussionEvidenceLines(task) {
+  const lines = [];
+
+  for (const [botOpenId, stance] of Object.entries(task.stanceByParticipantBotOpenId || {})) {
+    lines.push(`- ${botOpenId}: ${stance}`);
+  }
+
+  for (const summary of task.phaseSummaries || []) {
+    if (summary?.summary) {
+      lines.push(`- ${summary.phase || 'phase'} summary: ${summary.summary}`);
+    }
+  }
+
+  return lines.length > 0
+    ? lines
+    : ['- No participant stances were captured.'];
+}
+
+function getDiscussionMissingParticipants(task) {
+  const responded = new Set(Object.keys(task.stanceByParticipantBotOpenId || {}));
+  return (task.participantBotOpenIds || []).filter((botOpenId) => !responded.has(botOpenId));
+}
+
+function buildDiscussionRecommendation(task) {
+  const hasEvidence = buildDiscussionEvidenceLines(task)[0] !== '- No participant stances were captured.';
+  const missingParticipants = getDiscussionMissingParticipants(task);
+
+  if (!hasEvidence) {
+    return 'Retry the discussion with clearer delegated prompts or ask a human to decide directly.';
+  }
+  if (missingParticipants.length > 0) {
+    return 'Use the collected evidence only as tentative guidance and confirm the final decision with a human.';
+  }
+  return 'Use the collected evidence as the current best answer, but verify it before any irreversible action.';
+}
+
 function buildDiscussionForcedVerdict(task, reason) {
-  const stanceLines = Object.entries(task.stanceByParticipantBotOpenId || {})
-    .map(([botOpenId, stance]) => `${botOpenId}: ${stance}`)
-    .join('; ');
-  const unresponsive = (task.unresponsiveParticipantBotOpenIds || []).join(', ');
-  const details = [
-    stanceLines ? `Available stances: ${stanceLines}.` : 'No participant stances were captured.',
-    unresponsive ? `Unresponsive participants: ${unresponsive}.` : '',
-  ].filter(Boolean).join(' ');
+  const evidenceLines = buildDiscussionEvidenceLines(task);
+  const missingParticipants = getDiscussionMissingParticipants(task);
 
   return {
-    text: `Forced verdict for [task:${task.taskId}]: ${reason}${details ? ` ${details}` : ''}`,
+    text: [
+      `Forced verdict for [task:${task.taskId}]`,
+      `Original question: ${task.questionText || '(none)'}`,
+      'Available evidence:',
+      ...evidenceLines,
+      'Missing participants:',
+      ...(missingParticipants.length > 0 ? missingParticipants.map((botOpenId) => `- ${botOpenId}`) : ['- (none)']),
+      'Safest current recommendation:',
+      `- ${buildDiscussionRecommendation(task)}`,
+      'Reason:',
+      `- ${reason}`,
+    ].join('\n'),
     media: [],
     raw: '',
   };

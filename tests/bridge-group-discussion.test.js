@@ -225,9 +225,15 @@ test('host runner timeout during discussion falls back to a forced verdict and c
   }));
 
   const [taskId] = Object.keys(harness.pendingState.tasks);
+  const forcedVerdict = harness.sentReplies.at(-1).reply.text;
   assert.equal(harness.runReplyCalls.length, 1);
   assert.equal(harness.pendingState.tasks[taskId].status, 'timed_out');
-  assert.match(harness.sentReplies.at(-1).reply.text, /forced verdict|timed out|available input/i);
+  assert.match(forcedVerdict, new RegExp(`Forced verdict for \\[task:${taskId}\\]`));
+  assert.match(forcedVerdict, /Original question:\s*@bot @a @b compare these approaches/);
+  assert.match(forcedVerdict, /Available evidence:\s*- No participant stances were captured\./);
+  assert.match(forcedVerdict, /Missing participants:\s*- ou_a\s*- ou_b/);
+  assert.match(forcedVerdict, /Safest current recommendation:\s*- Retry the discussion with clearer delegated prompts or ask a human to decide directly\./);
+  assert.match(forcedVerdict, /Reason:\s*- host runner timed out after 5000ms/);
 });
 
 test('ordinary group user sessions stay isolated from hosted discussion sessions in the same chat', async () => {
