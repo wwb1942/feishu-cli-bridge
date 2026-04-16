@@ -33,9 +33,26 @@ function buildTaskExecutionHints(inbound) {
   ];
 }
 
+function buildDelegationHints(inbound) {
+  const routeKind = inbound?.meta?.routeKind || '';
+  const taskId = inbound?.meta?.taskId || '';
+  if (routeKind !== 'group_delegate_request' || !taskId) {
+    return [];
+  }
+
+  return [
+    'Delegated task context:',
+    `1. This is a delegated bot-to-bot task for [task:${taskId}].`,
+    '2. Answer only the delegated sub-task from the current user message.',
+    `3. Keep the visible result starting with [task:${taskId}] so the origin bot can reconcile it.`,
+    '4. Do not emit a new [delegate] prefix unless the delegated instruction explicitly asks for another delegation step.',
+  ];
+}
+
 export function buildBridgePrompt(systemPrompt, history, inbound) {
   const historyText = buildHistoryText(history);
   const executionHints = buildTaskExecutionHints(inbound);
+  const delegationHints = buildDelegationHints(inbound);
   return [
     systemPrompt,
     '',
@@ -46,6 +63,7 @@ export function buildBridgePrompt(systemPrompt, history, inbound) {
     inbound.text,
     '',
     ...(executionHints.length > 0 ? [...executionHints, ''] : []),
+    ...(delegationHints.length > 0 ? [...delegationHints, ''] : []),
     'Inbound attachments saved locally:',
     buildAttachmentSummary(inbound.attachments),
     '',

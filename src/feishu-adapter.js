@@ -366,6 +366,13 @@ async function createMessage(client, tracker, payload) {
 export async function startFeishuBridge(config, mediaDir, onInboundMessage) {
   const log = createLogger('feishu-bridge');
   const client = createClient(config);
+  const resolvedBotOpenId = await resolveBotIdentity(client, config);
+  if (resolvedBotOpenId) {
+    config.botOpenId = resolvedBotOpenId;
+  }
+  if (config.groupDelegationEnabled && !config.botOpenId) {
+    throw new Error('Failed to resolve FEISHU_BOT_OPEN_ID for group delegation');
+  }
   const wsClient = createWsClient(config);
   const dispatcher = createDispatcher(config);
   const recentOutbound = createRecentOutboundTracker();
