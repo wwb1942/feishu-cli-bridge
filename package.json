@@ -13,5 +13,10 @@
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.59.0",
     "https-proxy-agent": "^8.0.0"
+  },
+  "overrides": {
+    "axios": "1.15.0",
+    "follow-redirects": "1.16.0",
+    "protobufjs": "7.5.5"
   }
 }
